@@ -1,0 +1,1350 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RoadWatch — Decisions</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  /*------------------------------------------------------------------------
+    Apple-style design tokens — verbatim from temporal_v2.html so the two
+    surfaces feel identical. Light mode only.
+  ------------------------------------------------------------------------*/
+  :root {
+    --bg: #e6e8ec;
+    --surface: #ffffff;
+    --surface-2: #fafbfc;
+    --sidebar-bg: #f1f3f7;
+    --topbar-bg: #ffffff;
+    --topbar-border: rgba(0,0,0,0.06);
+    --fg: #1d1d1f;
+    --fg-2: #5e5e63;
+    --fg-3: #86868b;
+    --line: #e0e0e6;
+    --line-soft: #ecedf1;
+    --line-strong: #c7c7cc;
+    --accent: #007aff;
+    --accent-2: #0064d2;
+    --accent-soft: #e6f0ff;
+    --good: #34c759;
+    --fair: #ff9500;
+    --poor: #ff3b30;
+    --immediate: #ff3b30;
+    --scheduled: #ff9500;
+    --monitor:   #ffcc00;
+    --healthy:   #34c759;
+    --shadow-1: 0 1px 2px rgba(0,0,0,0.04), 0 2px 6px rgba(0,0,0,0.04);
+    --shadow-2: 0 2px 6px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.05);
+    --shadow-topbar: 0 1px 0 rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04);
+    --shadow-sidebar: -1px 0 0 rgba(0,0,0,0.04), -8px 0 24px rgba(0,0,0,0.03);
+    --shadow-drawer: -8px 0 32px rgba(0,0,0,0.10);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+                 "Inter", "Segoe UI", system-ui, sans-serif;
+    font-size: 14px; line-height: 1.5;
+    color: var(--fg); background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /*------------------------------------------------------------------------
+    Top bar — solid white, 56 px, full-width chrome
+  ------------------------------------------------------------------------*/
+  header.bar {
+    position: fixed; top: 0; left: 0; right: 0; height: 56px;
+    background: var(--topbar-bg);
+    border-bottom: 1px solid var(--topbar-border);
+    box-shadow: var(--shadow-topbar);
+    padding: 0 20px;
+    display: flex; align-items: center; gap: 12px; z-index: 200;
+  }
+  .brand {
+    font-weight: 600; font-size: 17px; letter-spacing: -0.01em;
+    display: flex; align-items: center; gap: 10px; min-width: 0;
+  }
+  .brand-dot {
+    display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), #5ac8fa);
+  }
+  .bar-divider {
+    width: 1px; height: 22px; background: var(--line); margin: 0 4px;
+  }
+  .bar-street {
+    font-weight: 600; font-size: 15px; letter-spacing: -0.01em;
+    color: var(--fg);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: 260px;
+  }
+  .bar-headline {
+    font-size: 13px; color: var(--fg-2); font-weight: 400;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    flex: 1; min-width: 0;
+  }
+  .bar-spacer { flex: 1; }
+  .topbtn {
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    color: var(--fg);
+    border-radius: 10px;
+    padding: 6px 12px;
+    font-size: 12px; font-weight: 500;
+    cursor: pointer;
+    transition: background 0.12s ease, border-color 0.12s ease;
+    display: inline-flex; align-items: center; gap: 6px;
+    text-decoration: none;
+  }
+  .topbtn:hover { background: var(--surface); border-color: var(--line-strong); }
+  .topbtn.primary {
+    background: var(--accent); color: white; border-color: var(--accent);
+  }
+  .topbtn.primary:hover { background: var(--accent-2); border-color: var(--accent-2); }
+  .topbtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /*------------------------------------------------------------------------
+    Main layout — map fills, sidebar 360 px
+  ------------------------------------------------------------------------*/
+  main.dashboard {
+    position: fixed; top: 56px; left: 0; right: 0; bottom: 0;
+    display: grid; grid-template-columns: 1fr 360px;
+  }
+  #map {
+    position: relative; background: #fafafa;
+  }
+  aside.sidebar {
+    background: var(--sidebar-bg);
+    border-left: 1px solid var(--line);
+    box-shadow: var(--shadow-sidebar);
+    overflow-y: auto;
+    padding: 14px 14px 60px;
+  }
+  aside.sidebar::-webkit-scrollbar { width: 6px; }
+  aside.sidebar::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 3px; }
+  aside.sidebar::-webkit-scrollbar-track { background: transparent; }
+
+  .tldr {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px 14px;
+    font-size: 13px; line-height: 1.5; color: var(--fg);
+    box-shadow: var(--shadow-1);
+    margin-bottom: 14px;
+  }
+  .tldr p { margin: 0 0 6px; }
+  .tldr p:last-child { margin: 0; }
+  .tldr .meta {
+    margin-top: 8px;
+    font-size: 11px; color: var(--fg-3);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /*------------------------------------------------------------------------
+    Priority bands
+  ------------------------------------------------------------------------*/
+  .band {
+    margin-bottom: 16px;
+  }
+  .band-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 4px 8px;
+    font-size: 11px; font-weight: 600; color: var(--fg-2);
+    letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .band-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    margin-right: 8px; vertical-align: middle;
+  }
+  .band-dot.immediate { background: var(--immediate); }
+  .band-dot.scheduled { background: var(--scheduled); }
+  .band-dot.monitor   { background: var(--monitor); }
+  .band-dot.healthy   { background: var(--healthy); }
+  .band-count {
+    font-size: 11px; color: var(--fg-3);
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 1px 7px;
+    font-variant-numeric: tabular-nums;
+    text-transform: none;
+    font-weight: 500;
+  }
+
+  .action-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left-width: 3px;
+    border-radius: 10px;
+    padding: 11px 12px;
+    box-shadow: var(--shadow-1);
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: box-shadow 0.15s, border-color 0.15s, transform 0.06s;
+    display: grid; grid-template-columns: 1fr 56px; gap: 10px;
+  }
+  .action-card:hover { box-shadow: var(--shadow-2); }
+  .action-card:active { transform: translateY(0.5px); }
+  .action-card.tier-immediate { border-left-color: var(--immediate); }
+  .action-card.tier-scheduled { border-left-color: var(--scheduled); }
+  .action-card.tier-monitor   { border-left-color: var(--monitor); }
+  .action-card.tier-healthy   { border-left-color: var(--healthy); }
+
+  .action-label {
+    font-weight: 600; font-size: 13px; color: var(--fg);
+    line-height: 1.35;
+  }
+  .action-points {
+    margin-top: 4px;
+    display: flex; flex-wrap: wrap; gap: 4px;
+  }
+  .sp-chip {
+    display: inline-block;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    color: var(--fg-2);
+    border-radius: 6px;
+    padding: 1px 6px;
+    font-size: 10px; font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .action-reason {
+    margin-top: 6px;
+    font-size: 12px; color: var(--fg-2); line-height: 1.45;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .action-thumb {
+    background: var(--line-soft);
+    border-radius: 8px;
+    overflow: hidden;
+    aspect-ratio: 1 / 1;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .action-thumb img {
+    width: 100%; height: 100%; object-fit: cover;
+  }
+  .action-thumb.empty { color: var(--fg-3); font-size: 10px; }
+
+  /*------------------------------------------------------------------------
+    Tier chips (verbatim values — match temporal_v2.html)
+  ------------------------------------------------------------------------*/
+  .chip {
+    display: inline-block; padding: 2px 8px;
+    border-radius: 999px; font-size: 11px; font-weight: 600;
+  }
+  .chip.cond.Good { background: rgba(52,199,89,0.15); color: #1a7437; }
+  .chip.cond.Fair { background: rgba(255,149,0,0.18); color: #9c5500; }
+  .chip.cond.Poor { background: rgba(255,59,48,0.18); color: #b8231a; }
+  .chip.cond.unknown { background: var(--line); color: var(--fg-2); }
+
+  .chip.year {
+    background: #eff6ff; color: var(--accent);
+    border: 1px solid #cfe3fa;
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+  }
+
+  /*------------------------------------------------------------------------
+    Map markers
+  ------------------------------------------------------------------------*/
+  .leaflet-container { font: inherit; background: #fafafa !important; }
+  .leaflet-tooltip {
+    background: white;
+    border: 1px solid var(--line);
+    color: var(--fg);
+    font-size: 11px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    box-shadow: var(--shadow-1);
+  }
+  .leaflet-tooltip-top:before, .leaflet-tooltip-bottom:before { display: none; }
+
+  /* Pulsing safety-flag halo (re-used pattern from temporal_v2.html) */
+  .leaflet-pulse-halo {
+    pointer-events: none;
+  }
+  @keyframes haloPulse {
+    0%, 100% { opacity: 0.55; }
+    50%      { opacity: 0.18; }
+  }
+
+  /*------------------------------------------------------------------------
+    Detail drawer
+  ------------------------------------------------------------------------*/
+  .drawer-backdrop {
+    position: fixed; inset: 56px 0 0 0; z-index: 300;
+    background: rgba(20, 22, 30, 0.18);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease;
+  }
+  .drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+
+  .drawer {
+    position: fixed; top: 56px; right: 0; bottom: 0;
+    width: 480px; max-width: 92vw;
+    background: var(--surface);
+    border-left: 1px solid var(--line);
+    box-shadow: var(--shadow-drawer);
+    transform: translateX(100%);
+    transition: transform 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+    z-index: 310;
+    display: flex; flex-direction: column;
+  }
+  .drawer.open { transform: translateX(0); }
+  @media (prefers-reduced-motion: reduce) {
+    .drawer { transition: none; }
+    .drawer-backdrop { transition: none; }
+  }
+
+  .drawer-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .drawer-head .sp {
+    font-weight: 600; font-size: 15px; letter-spacing: -0.01em;
+  }
+  .drawer-head .conf {
+    font-size: 11px; color: var(--fg-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .drawer-head .spacer { flex: 1; }
+  .drawer-close {
+    background: transparent; border: 1px solid var(--line);
+    width: 28px; height: 28px; border-radius: 8px;
+    cursor: pointer; color: var(--fg-2);
+    font-size: 16px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .drawer-close:hover { background: var(--surface-2); border-color: var(--line-strong); }
+
+  .drawer-body {
+    flex: 1; overflow-y: auto; padding: 14px 16px 80px;
+  }
+  .drawer-hero {
+    width: 100%; aspect-ratio: 16 / 10;
+    background: var(--line-soft);
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    margin-bottom: 12px;
+  }
+  .drawer-hero img { width: 100%; height: 100%; object-fit: cover; }
+  .drawer-hero.empty { display: flex; align-items: center; justify-content: center; color: var(--fg-3); font-size: 12px; }
+
+  .drawer h4 {
+    margin: 14px 0 6px;
+    font-size: 11px; font-weight: 600; color: var(--fg-3);
+    letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .pill-list {
+    display: flex; flex-wrap: wrap; gap: 6px;
+  }
+  .pill {
+    display: inline-block;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 4px 9px;
+    font-size: 12px; line-height: 1.4;
+    color: var(--fg);
+  }
+  .pill.distress { background: #fff5f4; border-color: #ffd2cb; color: #b8231a; }
+  .pill.treatment { background: #eff6ff; border-color: #cfe3fa; color: var(--accent-2); }
+  .pill.safety {
+    background: #fff5f4; border-color: #ffd2cb; color: #b8231a;
+    animation: pillPulse 1.8s ease-in-out infinite;
+  }
+  @keyframes pillPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255,59,48,0.0); }
+    50%      { box-shadow: 0 0 0 4px rgba(255,59,48,0.12); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pill.safety { animation: none; }
+  }
+
+  .rationale {
+    font-size: 13px; line-height: 1.55; color: var(--fg);
+  }
+  .rationale p { margin: 0 0 8px; }
+  .rationale code {
+    background: var(--surface-2); border: 1px solid var(--line);
+    padding: 1px 5px; border-radius: 4px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+  }
+
+  .year-strip {
+    display: flex; gap: 8px; overflow-x: auto;
+    padding: 4px 2px 8px;
+  }
+  .year-thumb {
+    flex: 0 0 96px;
+    cursor: pointer;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+    text-align: center;
+    transition: border-color 0.12s, transform 0.06s;
+  }
+  .year-thumb:hover { border-color: var(--accent); }
+  .year-thumb.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+  .year-thumb .img-wrap {
+    aspect-ratio: 4 / 3; background: var(--line-soft);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .year-thumb .img-wrap img { width: 100%; height: 100%; object-fit: cover; }
+  .year-thumb .lbl {
+    font-size: 11px; color: var(--fg-2); padding: 4px 0 5px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .drawer-foot {
+    border-top: 1px solid var(--line);
+    padding: 10px 16px;
+    display: flex; justify-content: space-between; align-items: center;
+    background: var(--surface);
+  }
+  .drawer-foot a {
+    font-size: 12px; color: var(--accent); text-decoration: none;
+  }
+  .drawer-foot a:hover { text-decoration: underline; }
+
+  /*------------------------------------------------------------------------
+    Empty / loading states
+  ------------------------------------------------------------------------*/
+  .overlay {
+    position: fixed; inset: 56px 0 0 0; z-index: 250;
+    background: rgba(255,255,255,0.86);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    display: flex; align-items: center; justify-content: center;
+    text-align: center;
+  }
+  .overlay-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: var(--shadow-2);
+    padding: 28px 32px;
+    max-width: 420px;
+  }
+  .overlay-card h2 {
+    margin: 0 0 8px; font-size: 17px; letter-spacing: -0.01em;
+  }
+  .overlay-card p {
+    margin: 0 0 6px; color: var(--fg-2); font-size: 13px;
+  }
+  .spinner {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    border: 2.5px solid var(--line);
+    border-top-color: var(--accent);
+    margin: 0 auto 14px;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; border-top-color: var(--line-strong); }
+  }
+
+  /*------------------------------------------------------------------------
+    Index view (/decisions — list of corridors)
+  ------------------------------------------------------------------------*/
+  main.index {
+    position: fixed; top: 56px; left: 0; right: 0; bottom: 0;
+    overflow-y: auto;
+    padding: 32px 24px 80px;
+  }
+  .index-inner {
+    max-width: 920px; margin: 0 auto;
+  }
+  .index-title {
+    font-size: 24px; font-weight: 600; letter-spacing: -0.02em;
+    margin: 0 0 4px;
+  }
+  .index-sub {
+    color: var(--fg-2); font-size: 14px; margin: 0 0 24px;
+  }
+  .index-grid {
+    display: grid; gap: 12px;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  }
+  .corridor-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: var(--shadow-1);
+    cursor: pointer;
+    transition: box-shadow 0.12s, transform 0.06s;
+    text-decoration: none; color: inherit;
+    display: block;
+  }
+  .corridor-card:hover { box-shadow: var(--shadow-2); }
+  .corridor-card:active { transform: translateY(0.5px); }
+  .corridor-card .name {
+    font-weight: 600; font-size: 15px; letter-spacing: -0.01em;
+    margin-bottom: 4px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .corridor-card .sub {
+    color: var(--fg-3); font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    margin-bottom: 10px;
+  }
+  .corridor-card .tier-bar {
+    display: flex; height: 6px; border-radius: 3px;
+    overflow: hidden;
+    background: var(--line);
+  }
+  .corridor-card .tier-bar > span { display: block; height: 100%; }
+  .corridor-card .meta-row {
+    margin-top: 8px;
+    display: flex; gap: 10px; align-items: center;
+    font-size: 11px; color: var(--fg-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .corridor-card .cached-dot {
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--good); margin-right: 4px;
+  }
+
+  .empty-list {
+    background: var(--surface);
+    border: 1px dashed var(--line-strong);
+    border-radius: 12px;
+    padding: 32px;
+    text-align: center; color: var(--fg-2);
+  }
+
+  /*------------------------------------------------------------------------
+    Responsive
+  ------------------------------------------------------------------------*/
+  @media (max-width: 880px) {
+    main.dashboard { grid-template-columns: 1fr; grid-template-rows: 1fr 320px; }
+    aside.sidebar { border-left: none; border-top: 1px solid var(--line); box-shadow: none; }
+    .drawer { width: 100%; }
+  }
+</style>
+</head>
+
+<body>
+
+<header class="bar">
+  <div class="brand"><span class="brand-dot"></span><span>RoadWatch</span></div>
+  <span class="bar-divider"></span>
+  <div id="bar-street" class="bar-street">Decisions</div>
+  <span id="bar-grade-wrap" style="display:none"><span class="chip cond" id="bar-grade">unknown</span></span>
+  <div id="bar-headline" class="bar-headline"></div>
+  <div class="bar-spacer"></div>
+  <button id="btn-reanalyze" class="topbtn" style="display:none" title="Re-run synthesis (Opus call)">↻ Re-analyze</button>
+  <a id="btn-livetrace" class="topbtn" style="display:none" target="_blank" rel="noopener">Open live trace</a>
+  <a id="btn-back" class="topbtn" href="./index.html" style="display:none">← Back</a>
+</header>
+
+<!-- The two top-level surfaces. Exactly one is visible based on URL. -->
+<main id="root-index" class="index" style="display:none">
+  <div class="index-inner">
+    <h1 class="index-title">Corridor decisions</h1>
+    <p class="index-sub">Completed surveys ready for review. Click any corridor to see priority actions.</p>
+    <div id="index-grid" class="index-grid"></div>
+  </div>
+</main>
+
+<main id="root-dashboard" class="dashboard" style="display:none">
+  <div id="map"></div>
+  <aside class="sidebar">
+    <div id="tldr-card" class="tldr" style="display:none"></div>
+    <div id="bands"></div>
+  </aside>
+</main>
+
+<!-- Drawer (single instance, hidden by default) -->
+<div id="drawer-backdrop" class="drawer-backdrop"></div>
+<aside id="drawer" class="drawer" role="dialog" aria-hidden="true">
+  <div class="drawer-head">
+    <span id="dw-sp" class="sp">SP —</span>
+    <span id="dw-tier" class="chip cond unknown">unknown</span>
+    <span id="dw-conf" class="conf"></span>
+    <span class="spacer"></span>
+    <button id="dw-close" class="drawer-close" aria-label="Close">×</button>
+  </div>
+  <div id="dw-body" class="drawer-body"></div>
+  <div class="drawer-foot">
+    <span id="dw-foot-meta" style="font-size:11px;color:var(--fg-3)"></span>
+    <a id="dw-mapillary" href="#" target="_blank" rel="noopener" style="display:none">View on Mapillary →</a>
+  </div>
+</aside>
+
+<!-- Synthesis-running overlay -->
+<div id="overlay" class="overlay" style="display:none">
+  <div class="overlay-card">
+    <div class="spinner"></div>
+    <h2 id="overlay-title">Analyzing corridor…</h2>
+    <p id="overlay-sub">Synthesizing priority actions from agent evidence.</p>
+    <p id="overlay-timer" style="font-size:12px;color:var(--fg-2);margin-top:10px;font-variant-numeric:tabular-nums">elapsed 0s</p>
+    <p id="overlay-hint" style="font-size:11px;color:var(--fg-3);margin-top:6px">Opus 4.7 reads the full evidence bundle in one pass — please don't reload.</p>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<!--
+  ===========================================================================
+  STATIC-DEMO SHIM — runs before the dashboard script. Forces slug =
+  "west_sunset" and routes every /api/decisions or /api/walker file fetch
+  to ./data/west_sunset/. No backend required.
+  ===========================================================================
+-->
+<script>
+(function () {
+  const DEMO_SLUG = 'west_sunset';
+  const DATA_BASE = './data/' + DEMO_SLUG + '/';
+  window.__STATIC_DEMO_SLUG = DEMO_SLUG;
+
+  let _bundlePromise = null;
+  function loadBundle() {
+    if (!_bundlePromise) _bundlePromise = fetch(DATA_BASE + 'bundle.json').then(r => r.json());
+    return _bundlePromise;
+  }
+  loadBundle();
+
+  function jsonResponse(obj) {
+    return new Response(JSON.stringify(obj), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const realFetch = window.fetch.bind(window);
+
+  window.fetch = async function (input, init) {
+    const url = (typeof input === 'string') ? input : (input && input.url) || '';
+
+    // /api/decisions/{slug}/bundle  →  bundle.json
+    if (/\/api\/decisions\/[^/]+\/bundle\b/.test(url)) {
+      const b = await loadBundle();
+      return jsonResponse(b);
+    }
+
+    // /api/decisions/runs  →  one-element list (the demo corridor only)
+    if (/\/api\/decisions\/runs\b/.test(url)) {
+      const b = await loadBundle();
+      const sb = b.street_blackboard || {};
+      const cfg = b.config || {};
+      const pss = sb.point_summaries || [];
+      const td = { Good: 0, Fair: 0, Poor: 0, unknown: 0 };
+      for (const p of pss) {
+        const t = p.tier || 'unknown';
+        if (td[t] != null) td[t] += 1;
+      }
+      const completes = pss.map(p => p.completed_ms).filter(Number.isFinite);
+      return jsonResponse({
+        runs: [{
+          slug: DEMO_SLUG,
+          street_name: cfg.street_name || sb.street_name || 'West Sunset Boulevard',
+          length_m: cfg.length_m,
+          n_points_total: pss.length,
+          n_points_graded: pss.length,
+          tier_distribution: td,
+          completed_ms: completes.length ? Math.max.apply(null, completes) : null,
+          synthesis_cached: !!b.synthesis,
+        }],
+      });
+    }
+
+    // POST /api/decisions/{slug}/synthesize  →  return cached synthesis
+    if (/\/api\/decisions\/[^/]+\/synthesize\b/.test(url)) {
+      const b = await loadBundle();
+      if (b.synthesis) return jsonResponse(b.synthesis);
+      return new Response('static demo: synthesis not pre-baked', { status: 409 });
+    }
+
+    // /api/walker/{slug}/file/viewports/X.jpg  →  ./data/west_sunset/viewports/X.jpg
+    const fileMatch = url.match(/\/api\/walker\/[^/]+\/file\/(.+)$/);
+    if (fileMatch) {
+      return realFetch(DATA_BASE + fileMatch[1], init);
+    }
+
+    return realFetch(input, init);
+  };
+})();
+</script>
+
+<script>
+//=============================================================================
+// RoadWatch Decisions — DOT engineer dashboard
+// /decisions          → list of completed corridors
+// /decisions/{slug}   → per-corridor priority dashboard
+//=============================================================================
+
+const TIER_COLOR = {
+  Good: '#34c759', Fair: '#ff9500', Poor: '#ff3b30', unknown: '#86868b',
+};
+const BAND_ORDER = ['immediate', 'scheduled', 'monitor', 'healthy'];
+const BAND_LABELS = {
+  immediate: 'Immediate',
+  scheduled: 'Scheduled',
+  monitor:   'Monitor',
+  healthy:   'Healthy',
+};
+
+// Static-demo override: force the slug to 'west_sunset' regardless of URL.
+// The shim block above this routes /api/decisions and /api/walker/.../file
+// fetches to local files in ./data/west_sunset/.
+const slugFromPath = (window.__STATIC_DEMO_SLUG)
+  || location.pathname.split('/').filter(Boolean)[1]
+  || null;
+
+//-----------------------------------------------------------------------------
+// Helpers (verbatim from temporal_v2.html — escapeHtml, mdToHtml, elMd)
+//-----------------------------------------------------------------------------
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function mdToHtml(s) {
+  let out = escapeHtml(s);
+  out = out.replace(/`([^`\n]+?)`/g, '<code>$1</code>');
+  out = out.replace(/\*\*([^*\n][^*]*?)\*\*/g, '<strong>$1</strong>');
+  out = out.replace(/(^|[^\w*])\*([^*\n]+?)\*(?!\w)/g, '$1<em>$2</em>');
+  out = out.replace(/\n\n+/g, '</p><p>');
+  out = out.replace(/\n/g, '<br>');
+  return '<p>' + out + '</p>';
+}
+function el(tag, props, children) {
+  const e = document.createElement(tag);
+  if (props) for (const k of Object.keys(props)) {
+    if (k === 'class') e.className = props[k];
+    else if (k === 'html') e.innerHTML = props[k];
+    else if (k === 'text') e.textContent = props[k];
+    else if (k.startsWith('on') && typeof props[k] === 'function') {
+      e.addEventListener(k.slice(2).toLowerCase(), props[k]);
+    } else e.setAttribute(k, props[k]);
+  }
+  if (children) for (const c of children) {
+    if (c == null) continue;
+    e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+  }
+  return e;
+}
+function elMd(tag, props, mdText) {
+  const e = el(tag, props);
+  e.innerHTML = mdToHtml(mdText || '');
+  return e;
+}
+function fmtAge(ms) {
+  if (!ms) return '';
+  const dt = new Date(ms);
+  return dt.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+//-----------------------------------------------------------------------------
+// Phase routing
+//-----------------------------------------------------------------------------
+if (slugFromPath) {
+  initDashboard(slugFromPath);
+} else {
+  initIndex();
+}
+
+//=============================================================================
+// INDEX — /decisions
+//=============================================================================
+async function initIndex() {
+  document.getElementById('btn-back').style.display = 'none';
+  document.getElementById('root-index').style.display = '';
+  document.getElementById('bar-street').textContent = 'Decisions';
+
+  const grid = document.getElementById('index-grid');
+  grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--fg-3);padding:24px">Loading…</div>';
+
+  let runs = [];
+  try {
+    const res = await fetch('/api/decisions/runs');
+    const j = await res.json();
+    runs = j.runs || [];
+  } catch (err) {
+    grid.innerHTML = `<div class="empty-list">Could not load corridor list: ${escapeHtml(err.message)}</div>`;
+    return;
+  }
+  if (!runs.length) {
+    grid.innerHTML = '<div class="empty-list">No completed corridor surveys yet. Run a hierarchy survey from the live trace page first.</div>';
+    return;
+  }
+  grid.innerHTML = '';
+  for (const r of runs) {
+    const card = el('a', {
+      class: 'corridor-card',
+      href: '/decisions/' + encodeURIComponent(r.slug),
+    });
+    card.appendChild(el('div', {
+      class: 'name',
+      text: r.street_name || r.slug,
+    }));
+    const sub = `${r.n_points_graded || 0} points · ${(r.length_m || 0).toFixed(0)} m`;
+    card.appendChild(el('div', { class: 'sub', text: sub }));
+    // Tier bar
+    const td = r.tier_distribution || {};
+    const total = (td.Good || 0) + (td.Fair || 0) + (td.Poor || 0) + (td.unknown || 0) || 1;
+    const bar = el('div', { class: 'tier-bar' });
+    for (const [t, c] of [['Poor', td.Poor], ['Fair', td.Fair], ['Good', td.Good], ['unknown', td.unknown]]) {
+      if (!c) continue;
+      bar.appendChild(el('span', {
+        style: `width:${(c / total * 100).toFixed(1)}%;background:${TIER_COLOR[t]};`,
+      }));
+    }
+    card.appendChild(bar);
+
+    const metaRow = el('div', { class: 'meta-row' });
+    if (r.synthesis_cached) {
+      const cached = el('span', { html: '<span class="cached-dot"></span>Synthesis cached' });
+      metaRow.appendChild(cached);
+    } else {
+      metaRow.appendChild(el('span', { text: 'Click to synthesize' }));
+    }
+    metaRow.appendChild(el('span', { class: 'spacer', style: 'flex:1' }));
+    if (r.completed_ms) {
+      metaRow.appendChild(el('span', { text: fmtAge(r.completed_ms) }));
+    }
+    card.appendChild(metaRow);
+    grid.appendChild(card);
+  }
+}
+
+//=============================================================================
+// DASHBOARD — /decisions/{slug}
+//=============================================================================
+
+let map = null;
+let bundle = null;
+let synthesis = null;
+let pointMarkers = {};   // idx -> {marker, halo}
+let activePointIdx = null;
+
+// Surface any uncaught error to the page so we never leave the user with a
+// silent white screen.
+window.addEventListener('error', (e) => {
+  console.error('uncaught:', e.error || e.message);
+  showFatal('Page error', String((e.error && e.error.stack) || e.message || e));
+});
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('unhandled rejection:', e.reason);
+  showFatal('Page error', String((e.reason && e.reason.stack) || e.reason || e));
+});
+
+async function initDashboard(slug) {
+  try {
+    document.getElementById('root-dashboard').style.display = 'grid';
+    // Static demo: live trace is the index page; re-analyze requires a backend (hidden).
+    document.getElementById('btn-livetrace').href = './index.html';
+    document.getElementById('btn-livetrace').textContent = '← Live trace';
+    document.getElementById('btn-livetrace').removeAttribute('target');
+    document.getElementById('btn-livetrace').style.display = '';
+    if (window.__STATIC_DEMO_SLUG) {
+      document.getElementById('btn-reanalyze').style.display = 'none';
+    } else {
+      document.getElementById('btn-reanalyze').style.display = '';
+    }
+
+    // Wait one frame so the freshly-revealed grid container reports real
+    // dimensions before Leaflet measures it. Without this, on some browsers
+    // the tile layer never paints because the viewport bounds compute as 0×0.
+    await new Promise(r => requestAnimationFrame(() => r()));
+
+    // Map
+    map = L.map('map', { zoomControl: true, attributionControl: true })
+          .setView([34.0966, -118.3545], 15);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+      maxZoom: 20,
+      subdomains: 'abcd',
+      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · © <a href="https://carto.com/attributions">CARTO</a>',
+    }).addTo(map);
+    // Belt-and-braces — recompute size after the layout settles.
+    setTimeout(() => { try { map.invalidateSize(); } catch (e) {} }, 50);
+
+    // Drawer wiring
+    document.getElementById('dw-close').addEventListener('click', closeDrawer);
+    document.getElementById('drawer-backdrop').addEventListener('click', closeDrawer);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeDrawer();
+    });
+
+    // Re-analyze
+    document.getElementById('btn-reanalyze').addEventListener('click', async () => {
+      const street = (bundle && bundle.config && bundle.config.street_name) || slug;
+      const ok = confirm(`Re-analyze ${street}?\n\nThis runs a fresh Opus 4.7 synthesis call and overwrites the cache.`);
+      if (!ok) return;
+      await runSynthesis(true);
+    });
+
+    await loadBundle(slug);
+    if (!bundle) return;
+
+    drawStreet();
+    drawPoints();
+    try { map.invalidateSize(); } catch (e) {}
+
+    if (bundle.synthesis) {
+      synthesis = bundle.synthesis;
+      renderDashboard();
+    } else {
+      await runSynthesis(false);
+    }
+  } catch (err) {
+    console.error('initDashboard failed:', err);
+    showFatal('Dashboard failed to load',
+      String((err && err.stack) || err && err.message || err));
+  }
+}
+
+async function loadBundle(slug) {
+  try {
+    const res = await fetch('/api/decisions/' + encodeURIComponent(slug) + '/bundle');
+    if (res.status === 404) {
+      showFatal('Corridor not found', `No survey run with slug ${slug}.`);
+      return;
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    bundle = await res.json();
+  } catch (err) {
+    showFatal('Could not load corridor', err.message);
+    return;
+  }
+  const cfg = bundle.config || {};
+  const street = cfg.street_name || (bundle.street_blackboard || {}).street_name || slug;
+  document.getElementById('bar-street').textContent = street;
+  document.title = `${street} — RoadWatch Decisions`;
+
+  const pss = (bundle.street_blackboard || {}).point_summaries || [];
+  if (!pss.length) {
+    showFatal('Survey not yet complete', 'No graded survey points found for this corridor. Open the live trace to see progress.', '/temporal/' + encodeURIComponent(slug), 'Open live trace');
+    bundle = null;
+    return;
+  }
+}
+
+function drawStreet() {
+  const features = (bundle.street || {}).features || [];
+  const allLatLngs = [];
+  for (const f of features) {
+    if (!f.geometry || f.geometry.type !== 'LineString') continue;
+    const coords = f.geometry.coordinates || [];
+    if (coords.length < 2) continue;
+    const ll = coords.map(c => [c[1], c[0]]);
+    L.polyline(ll, {
+      color: '#1d1d1f', weight: 3, opacity: 0.5, lineCap: 'round',
+    }).addTo(map);
+    allLatLngs.push(...ll);
+  }
+  if (allLatLngs.length) {
+    map.fitBounds(L.latLngBounds(allLatLngs), { padding: [60, 60] });
+  }
+}
+
+function drawPoints() {
+  const pss = (bundle.street_blackboard || {}).point_summaries || [];
+  const wpFeatures = (bundle.waypoints || {}).features || [];
+  // Map waypoint_idx → {lat, lon}
+  const wpCoords = {};
+  for (const f of wpFeatures) {
+    const idx = f.properties && f.properties.waypoint_idx;
+    if (!Number.isInteger(idx)) continue;
+    const c = f.geometry && f.geometry.coordinates;
+    if (Array.isArray(c) && c.length >= 2) {
+      wpCoords[idx] = [c[1], c[0]];
+    }
+  }
+
+  for (const ps of pss) {
+    const idx = ps.point_idx;
+    let ll = wpCoords[idx];
+    // Fallback: per-point blackboard has lat/lon
+    if (!ll) {
+      const wp = (bundle.per_point_evidence || {})[String(idx)];
+      if (wp && Number.isFinite(wp.lat) && Number.isFinite(wp.lon)) {
+        ll = [wp.lat, wp.lon];
+      }
+    }
+    if (!ll) continue;
+
+    const tier = ps.tier || 'unknown';
+    const hasSafety = (ps.safety_flags || []).length > 0;
+    let halo = null;
+    if (hasSafety) {
+      halo = L.circleMarker(ll, {
+        radius: 14, color: '#ff3b30', weight: 2.5,
+        fillOpacity: 0, dashArray: '4,4',
+        className: 'leaflet-pulse-halo',
+        interactive: false,
+      }).addTo(map);
+      // Manual CSS pulse via setStyle interval (paths can't use CSS animation directly)
+      let on = true;
+      setInterval(() => {
+        on = !on;
+        try { halo.setStyle({ opacity: on ? 0.7 : 0.25 }); } catch (e) {}
+      }, 700);
+    }
+    const marker = L.circleMarker(ll, {
+      radius: 8, color: '#ffffff', weight: 1.5,
+      fillColor: TIER_COLOR[tier] || TIER_COLOR.unknown,
+      fillOpacity: 0.96,
+    }).addTo(map);
+    marker.bindTooltip(`SP ${idx + 1} · ${tier}`, { direction: 'top', offset: [0, -4] });
+    marker.on('click', () => openDrawer(idx));
+    pointMarkers[idx] = { marker, halo };
+  }
+}
+
+async function runSynthesis(force) {
+  const nPts = (bundle.street_blackboard.point_summaries || []).length;
+  // Empirical: ~1.5s/point on the Opus 4.7 single-call synthesis. 47 points → ~70s.
+  const estSec = Math.max(15, Math.round(nPts * 1.5));
+  showOverlay(
+    force ? 'Re-analyzing corridor…' : 'Analyzing corridor…',
+    `Synthesizing priority actions across ${nPts} survey points. Estimated ~${estSec}s.`,
+    estSec
+  );
+  try {
+    const res = await fetch('/api/decisions/' + encodeURIComponent(slugFromPath) + '/synthesize' + (force ? '?force=1' : ''), {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(`Synthesis failed (HTTP ${res.status}): ${txt.slice(0, 200)}`);
+    }
+    synthesis = await res.json();
+  } catch (err) {
+    hideOverlay();
+    showFatal('Synthesis failed', err.message);
+    return;
+  }
+  hideOverlay();
+  renderDashboard();
+}
+
+function renderDashboard() {
+  if (!synthesis) return;
+  // Top bar
+  const grade = synthesis.corridor_grade || 'unknown';
+  const gw = document.getElementById('bar-grade-wrap');
+  const ge = document.getElementById('bar-grade');
+  ge.textContent = grade;
+  ge.className = 'chip cond ' + grade;
+  gw.style.display = '';
+  document.getElementById('bar-headline').textContent = synthesis.headline || '';
+
+  // TL;DR card
+  const tldr = document.getElementById('tldr-card');
+  tldr.innerHTML = '';
+  if (synthesis.tldr) tldr.appendChild(elMd('p', null, synthesis.tldr));
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  const dt = synthesis.synthesized_at_ms ? fmtAge(synthesis.synthesized_at_ms) : '';
+  const cost = (synthesis.cost_usd != null) ? ` · $${synthesis.cost_usd.toFixed(2)}` : '';
+  meta.textContent = `Synthesized ${dt}${cost}`;
+  tldr.appendChild(meta);
+  tldr.style.display = '';
+
+  // Priority bands
+  const bandsEl = document.getElementById('bands');
+  bandsEl.innerHTML = '';
+  const grouped = {};
+  for (const t of BAND_ORDER) grouped[t] = [];
+  for (const a of (synthesis.priority_actions || [])) {
+    const t = BAND_ORDER.includes(a.tier) ? a.tier : 'monitor';
+    grouped[t].push(a);
+  }
+  for (const t of BAND_ORDER) {
+    const list = grouped[t];
+    const band = el('div', { class: 'band' });
+    const head = el('div', { class: 'band-head' });
+    head.appendChild(el('span', {
+      html: `<span class="band-dot ${t}"></span>${BAND_LABELS[t]}`,
+    }));
+    head.appendChild(el('span', { class: 'band-count', text: String(list.length) }));
+    band.appendChild(head);
+    if (!list.length) {
+      const empty = el('div', {
+        class: 'action-card', style: 'cursor:default;border-left-color:var(--line);',
+        html: `<div><div class="action-label" style="color:var(--fg-3);font-weight:500;">No ${BAND_LABELS[t].toLowerCase()} actions</div></div><div></div>`,
+      });
+      band.appendChild(empty);
+    } else {
+      for (const a of list) band.appendChild(renderActionCard(a));
+    }
+    bandsEl.appendChild(band);
+  }
+}
+
+function renderActionCard(a) {
+  const slug = slugFromPath;
+  const card = el('div', { class: 'action-card tier-' + a.tier });
+  const main = el('div');
+  main.appendChild(el('div', { class: 'action-label', text: a.label || '(unnamed action)' }));
+  if ((a.point_indices || []).length) {
+    const chips = el('div', { class: 'action-points' });
+    for (const idx of a.point_indices) {
+      chips.appendChild(el('span', { class: 'sp-chip', text: 'SP ' + (idx + 1) }));
+    }
+    main.appendChild(chips);
+  }
+  if (a.reason) main.appendChild(el('div', { class: 'action-reason', text: a.reason }));
+  card.appendChild(main);
+
+  // Thumbnail = first evidence image (if it has a viewport on disk)
+  const thumb = el('div', { class: 'action-thumb' });
+  const firstImg = (a.evidence_image_ids || [])[0];
+  const vp = firstImg ? findViewportFile(firstImg) : null;
+  if (vp) {
+    thumb.appendChild(el('img', {
+      src: '/api/walker/' + encodeURIComponent(slug) + '/file/viewports/' + encodeURIComponent(vp),
+      alt: '',
+      loading: 'lazy',
+    }));
+  } else {
+    thumb.classList.add('empty');
+    thumb.textContent = 'no img';
+  }
+  card.appendChild(thumb);
+
+  // Click → drawer for the first point in the action
+  card.addEventListener('click', () => {
+    const idx = (a.point_indices || [])[0];
+    if (Number.isInteger(idx)) openDrawer(idx, { actionId: a.id });
+  });
+  return card;
+}
+
+function findViewportFile(imageId) {
+  const idx = bundle.viewport_index || {};
+  const list = idx[String(imageId)];
+  if (!list || !list.length) return null;
+  // Prefer the y+180 / y+000 base viewport (not zoom/lookaround) if present.
+  for (const f of list) {
+    if (/_y[+\-]\d{3}_p[+\-]\d{2}_h\d{3}\.jpg$/i.test(f) && !/^.*ZOOM/.test(f) && !/^.*LOOKAROUND/.test(f)) {
+      return f;
+    }
+  }
+  return list[0];
+}
+
+function viewportUrl(imageId) {
+  const f = findViewportFile(imageId);
+  if (!f) return null;
+  return '/api/walker/' + encodeURIComponent(slugFromPath) + '/file/viewports/' + encodeURIComponent(f);
+}
+
+//-----------------------------------------------------------------------------
+// Drawer
+//-----------------------------------------------------------------------------
+function openDrawer(pointIdx) {
+  const pss = (bundle.street_blackboard || {}).point_summaries || [];
+  const ps = pss.find(p => p.point_idx === pointIdx);
+  if (!ps) return;
+  activePointIdx = pointIdx;
+
+  document.getElementById('dw-sp').textContent = 'SP ' + (pointIdx + 1);
+  const tier = ps.tier || 'unknown';
+  const tierEl = document.getElementById('dw-tier');
+  tierEl.textContent = tier;
+  tierEl.className = 'chip cond ' + tier;
+  document.getElementById('dw-conf').textContent =
+    ps.confidence != null ? `confidence ${(ps.confidence * 100).toFixed(0)}%` : '';
+
+  const body = document.getElementById('dw-body');
+  body.innerHTML = '';
+
+  // Hero
+  const heroId = ps.chosen_image_id || (ps.evidence_image_ids || [])[0];
+  const heroWrap = el('div', { class: 'drawer-hero' });
+  const heroUrl = heroId ? viewportUrl(heroId) : null;
+  if (heroUrl) {
+    heroWrap.appendChild(el('img', { id: 'dw-hero-img', src: heroUrl, alt: '' }));
+  } else {
+    heroWrap.classList.add('empty');
+    heroWrap.textContent = 'no viewport image on disk';
+  }
+  body.appendChild(heroWrap);
+
+  // Distresses
+  if ((ps.distresses_observed || []).length) {
+    body.appendChild(el('h4', { text: 'Distresses observed' }));
+    const list = el('div', { class: 'pill-list' });
+    for (const d of ps.distresses_observed) {
+      const txt = [d.type, d.severity, d.location, d.year].filter(Boolean).join(' · ');
+      list.appendChild(el('span', { class: 'pill distress', text: txt }));
+    }
+    body.appendChild(list);
+  }
+  // Treatments
+  if ((ps.treatments_observed || []).length) {
+    body.appendChild(el('h4', { text: 'Treatments observed' }));
+    const list = el('div', { class: 'pill-list' });
+    for (const t of ps.treatments_observed) {
+      const txt = [t.type, t.year, t.evidence].filter(Boolean).join(' · ');
+      list.appendChild(el('span', { class: 'pill treatment', text: txt }));
+    }
+    body.appendChild(list);
+  }
+  // Safety flags
+  if ((ps.safety_flags || []).length) {
+    body.appendChild(el('h4', { text: 'Safety flags' }));
+    const list = el('div', { class: 'pill-list' });
+    for (const s of ps.safety_flags) {
+      list.appendChild(el('span', { class: 'pill safety', text: String(s) }));
+    }
+    body.appendChild(list);
+  }
+  // Surveyor rationale
+  if (ps.rationale) {
+    body.appendChild(el('h4', { text: 'Surveyor rationale' }));
+    body.appendChild(elMd('div', { class: 'rationale' }, ps.rationale));
+  }
+  // Per-year strip (claims_by_year + status_by_year best_image_id)
+  const wp = (bundle.per_point_evidence || {})[String(pointIdx)] || {};
+  const statusByYear = wp.status_by_year || {};
+  const years = Object.keys(statusByYear).sort();
+  if (years.length > 1 || (years.length === 1 && statusByYear[years[0]].best_image_id)) {
+    body.appendChild(el('h4', { text: 'Per-year evidence' }));
+    const strip = el('div', { class: 'year-strip' });
+    for (const yr of years) {
+      const s = statusByYear[yr] || {};
+      const bestId = s.best_image_id;
+      const url = bestId ? viewportUrl(bestId) : null;
+      const t = el('div', { class: 'year-thumb' });
+      t.dataset.year = yr;
+      const wrap = el('div', { class: 'img-wrap' });
+      if (url) wrap.appendChild(el('img', { src: url, alt: '', loading: 'lazy' }));
+      else wrap.appendChild(el('span', { html: '<span style="font-size:10px;color:var(--fg-3);">no img</span>' }));
+      t.appendChild(wrap);
+      t.appendChild(el('div', { class: 'lbl', text: yr + (s.usable === false ? ' · skipped' : '') }));
+      if (bestId === heroId) t.classList.add('active');
+      t.addEventListener('click', () => {
+        if (!url) return;
+        const heroImg = document.getElementById('dw-hero-img');
+        if (heroImg) heroImg.src = url;
+        else heroWrap.appendChild(el('img', { id: 'dw-hero-img', src: url, alt: '' }));
+        for (const e of strip.querySelectorAll('.year-thumb')) e.classList.remove('active');
+        t.classList.add('active');
+      });
+      strip.appendChild(t);
+    }
+    body.appendChild(strip);
+  }
+  // Engineer note from synthesis (when this point appears in an action)
+  if (synthesis && synthesis.priority_actions) {
+    const owning = synthesis.priority_actions.filter(
+      a => (a.point_indices || []).includes(pointIdx)
+    );
+    if (owning.length) {
+      body.appendChild(el('h4', { text: 'Engineer notes' }));
+      for (const a of owning) {
+        const note = el('div', {
+          class: 'rationale',
+          style: 'background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:6px;',
+        });
+        note.appendChild(el('div', {
+          html: `<strong>${escapeHtml(a.label)}</strong> <span class="chip cond ${tier}" style="margin-left:6px">${escapeHtml(a.tier)}</span>`,
+        }));
+        if (a.estimated_treatment) {
+          note.appendChild(el('div', {
+            style: 'font-size:12px;color:var(--fg-2);margin-top:4px;',
+            text: 'Recommended: ' + a.estimated_treatment,
+          }));
+        }
+        if (a.engineer_note) {
+          note.appendChild(el('div', {
+            style: 'font-size:12px;color:var(--fg);margin-top:6px;',
+            text: a.engineer_note,
+          }));
+        }
+        body.appendChild(note);
+      }
+    }
+  }
+
+  // Footer link to Mapillary
+  const mapillary = document.getElementById('dw-mapillary');
+  if (heroId) {
+    mapillary.href = `https://www.mapillary.com/app/?focus=photo&pKey=${encodeURIComponent(heroId)}`;
+    mapillary.style.display = '';
+  } else {
+    mapillary.style.display = 'none';
+  }
+  document.getElementById('dw-foot-meta').textContent =
+    ps.surveyor_id ? `surveyor: ${ps.surveyor_id}` : '';
+
+  document.getElementById('drawer').classList.add('open');
+  document.getElementById('drawer-backdrop').classList.add('open');
+  document.getElementById('drawer').setAttribute('aria-hidden', 'false');
+}
+
+function closeDrawer() {
+  document.getElementById('drawer').classList.remove('open');
+  document.getElementById('drawer-backdrop').classList.remove('open');
+  document.getElementById('drawer').setAttribute('aria-hidden', 'true');
+  activePointIdx = null;
+}
+
+//-----------------------------------------------------------------------------
+// Overlays
+//-----------------------------------------------------------------------------
+let _overlayTimer = null;
+function showOverlay(title, sub, estSec) {
+  document.getElementById('overlay-title').textContent = title;
+  document.getElementById('overlay-sub').textContent = sub || '';
+  document.getElementById('overlay').style.display = '';
+  // Live elapsed-time counter so the user knows the request is in-flight.
+  const tEl = document.getElementById('overlay-timer');
+  const hEl = document.getElementById('overlay-hint');
+  if (_overlayTimer) clearInterval(_overlayTimer);
+  const t0 = Date.now();
+  const tick = () => {
+    const s = Math.round((Date.now() - t0) / 1000);
+    if (tEl) tEl.textContent = `elapsed ${s}s${estSec ? ` · est ~${estSec}s` : ''}`;
+    if (hEl && estSec && s > estSec * 1.5) {
+      hEl.textContent = "Taking longer than usual — Opus is still working. Please don't reload.";
+    }
+  };
+  tick();
+  _overlayTimer = setInterval(tick, 1000);
+}
+function hideOverlay() {
+  document.getElementById('overlay').style.display = 'none';
+  if (_overlayTimer) { clearInterval(_overlayTimer); _overlayTimer = null; }
+}
+function showFatal(title, body, linkHref, linkLabel) {
+  try { hideOverlay(); } catch (e) {}
+  const root = document.getElementById('root-dashboard');
+  if (root) root.style.display = '';
+  const bands = document.getElementById('bands');
+  if (bands) bands.innerHTML = '';
+  const tldr = document.getElementById('tldr-card');
+  if (tldr) {
+    tldr.innerHTML =
+      `<p><strong>${escapeHtml(title)}</strong></p>` +
+      `<p style="white-space:pre-wrap;font-size:12px;color:var(--fg-2)">${escapeHtml(body)}</p>` +
+      (linkHref
+        ? `<p><a href="${linkHref}" class="topbtn" style="margin-top:6px;display:inline-flex;">${escapeHtml(linkLabel || 'Continue')}</a></p>`
+        : '');
+    tldr.style.display = '';
+  } else {
+    // Fallback: prepend a banner to body so the user sees SOMETHING.
+    const banner = document.createElement('div');
+    banner.style.cssText = 'position:fixed;top:60px;left:16px;right:16px;background:#fff5f4;border:1px solid #ffd2cb;color:#b8231a;padding:12px 16px;border-radius:8px;font-size:13px;z-index:999;';
+    banner.innerHTML = `<strong>${escapeHtml(title)}</strong><br>${escapeHtml(body)}`;
+    document.body.appendChild(banner);
+  }
+}
+</script>
+</body>
+</html>

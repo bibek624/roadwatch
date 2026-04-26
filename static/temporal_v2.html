@@ -1,0 +1,1925 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>RoadWatch · Pavement Survey</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css">
+  <style>
+    /*-------------------------------------------------------------
+      RoadWatch v2 — Apple-flavored light UI
+      Sidebar on right, map fills, all white surfaces.
+    -------------------------------------------------------------*/
+    :root {
+      /* Layered surface tokens — body chrome is darker than content,
+         sidebar has its own tint to feel like a distinct panel. */
+      --bg: #e6e8ec;             /* page chrome — slightly cool gray */
+      --surface: #ffffff;        /* primary cards / sub-panels */
+      --surface-2: #fafbfc;      /* very subtle elevation */
+      --sidebar-bg: #f1f3f7;     /* sidebar panel — distinct from chrome */
+      --topbar-bg: #ffffff;
+      --topbar-border: rgba(0,0,0,0.06);
+      --fg: #1d1d1f;
+      --fg-2: #5e5e63;
+      --fg-3: #86868b;
+      --line: #e0e0e6;
+      --line-soft: #ecedf1;
+      --line-strong: #c7c7cc;
+      --accent: #007aff;
+      --accent-2: #0064d2;
+      --accent-soft: #e6f0ff;
+      --good: #34c759;
+      --fair: #ff9500;
+      --poor: #ff3b30;
+      --stop:  #ff3b30;
+      --robot-grad: linear-gradient(135deg, #5ac8fa 0%, #007aff 100%);
+      --shadow-1: 0 1px 2px rgba(0,0,0,0.04), 0 2px 6px rgba(0,0,0,0.04);
+      --shadow-2: 0 2px 6px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.05);
+      --shadow-topbar: 0 1px 0 rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04);
+      --shadow-sidebar: -1px 0 0 rgba(0,0,0,0.04), -8px 0 24px rgba(0,0,0,0.03);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+                   "Inter", "Segoe UI", system-ui, sans-serif;
+      font-size: 14px; line-height: 1.5;
+      color: var(--fg); background: var(--bg);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      display: grid;
+      grid-template-rows: 60px 1fr;
+      grid-template-areas: "bar" "main";
+    }
+
+    /*-------------------------------------------------------------
+      Top bar — solid white with strong shadow for chrome separation
+    -------------------------------------------------------------*/
+    header.bar {
+      grid-area: bar;
+      background: var(--topbar-bg);
+      border-bottom: 1px solid var(--topbar-border);
+      box-shadow: var(--shadow-topbar);
+      padding: 0 24px;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 16px; z-index: 200;
+    }
+    .brand {
+      font-weight: 600; font-size: 17px; letter-spacing: -0.01em;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .brand-dot {
+      display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), #5ac8fa);
+    }
+    .brand small {
+      color: var(--fg-2); font-weight: 400; font-size: 13px;
+      letter-spacing: 0;
+    }
+    .stats {
+      display: flex; gap: 14px; align-items: center;
+      font-size: 13px; color: var(--fg-2);
+    }
+    .stats b {
+      color: var(--fg); font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    .stat-pill {
+      background: var(--surface-2);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 5px 11px;
+      font-size: 12px;
+    }
+    .dev-only { display: none !important; }
+
+    .status-dot {
+      display: inline-block; width: 7px; height: 7px;
+      border-radius: 50%; background: var(--fg-3);
+      margin-right: 6px; vertical-align: middle;
+    }
+    .status-dot.live { background: var(--good); animation: pulse 1.6s infinite; }
+    .status-dot.done { background: var(--accent); }
+    .status-dot.error { background: var(--poor); }
+    .status-dot.waiting { background: var(--fair); animation: pulse 2s infinite; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+    }
+
+    .topbtn {
+      background: var(--surface-2);
+      border: 1px solid var(--line);
+      color: var(--fg);
+      border-radius: 10px;
+      padding: 6px 12px;
+      font-size: 12px; font-weight: 500;
+      cursor: pointer;
+      transition: background 0.12s ease, border-color 0.12s ease;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .topbtn:hover { background: var(--surface); border-color: var(--line-strong); }
+    .topbtn.stop {
+      background: var(--stop); color: white; border-color: var(--stop);
+    }
+    .topbtn.stop:hover { background: #e0312a; border-color: #e0312a; }
+
+
+    /*-------------------------------------------------------------
+      Main layout — map left, sidebar right
+    -------------------------------------------------------------*/
+    main.layout {
+      grid-area: main;
+      display: grid;
+      grid-template-columns: 1fr 480px;
+      height: 100%; overflow: hidden;
+    }
+    section.map-stage {
+      position: relative;
+      background: #ffffff;
+    }
+    /* OSM tiles are colour-rich, so the loading background is the OSM beige/grey */
+    #map { width: 100%; height: 100%; background: #f2efe9; }
+
+    /* Map overlays (status banners) */
+    .map-banner {
+      position: absolute; top: 16px; left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255,255,255,0.96);
+      backdrop-filter: blur(8px);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+      padding: 11px 18px;
+      font-size: 13px; color: var(--fg);
+      z-index: 800;
+      max-width: 520px;
+      white-space: nowrap;
+    }
+    .map-banner.subtle {
+      background: rgba(255,255,255,0.78);
+      color: var(--fg-2);
+    }
+
+    /* Map streets (after polygon) */
+    .map-side-action {
+      position: absolute; bottom: 20px; left: 20px;
+      background: rgba(255,255,255,0.96);
+      backdrop-filter: blur(8px);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+      padding: 12px 14px;
+      z-index: 800;
+      display: flex; flex-direction: column; gap: 8px;
+      min-width: 220px;
+    }
+    .map-side-action .label {
+      font-size: 11px; color: var(--fg-2);
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .pill-btn {
+      background: var(--surface-2);
+      border: 1px solid var(--line);
+      color: var(--fg); border-radius: 8px;
+      padding: 7px 11px; font-size: 12px; font-weight: 500;
+      cursor: pointer;
+    }
+    .pill-btn:hover { background: var(--surface); border-color: var(--accent); color: var(--accent); }
+    .pill-btn.primary {
+      background: var(--accent); color: white; border-color: var(--accent);
+    }
+    .pill-btn.primary:hover { background: var(--accent-2); border-color: var(--accent-2); }
+
+    /*-------------------------------------------------------------
+      Sidebar (right) — tinted panel for visual separation
+    -------------------------------------------------------------*/
+    aside.sidebar {
+      background: var(--sidebar-bg);
+      border-left: 1px solid var(--line);
+      box-shadow: var(--shadow-sidebar);
+      display: flex; flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+    .side-head {
+      padding: 18px 22px 14px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+      flex: 0 0 auto;
+    }
+    .side-head h2 {
+      margin: 0; font-size: 15px; font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .side-head .sub {
+      font-size: 12px; color: var(--fg-2); margin-top: 4px;
+    }
+    .side-filter {
+      display: flex; gap: 8px; align-items: center;
+      padding: 10px 16px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
+      flex: 0 0 auto;
+    }
+    .side-filter label {
+      font-size: 11px; color: var(--fg-2);
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .side-filter select {
+      flex: 1; background: var(--surface-2);
+      border: 1px solid var(--line); border-radius: 8px;
+      padding: 5px 8px; font-size: 12px; color: var(--fg);
+      font-family: inherit;
+    }
+
+    .side-feed {
+      flex: 1; overflow-y: auto;
+      padding: 12px 14px 80px;
+      scroll-behavior: smooth;
+    }
+    .side-feed::-webkit-scrollbar { width: 6px; }
+    .side-feed::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 3px; }
+
+    /*-------------------------------------------------------------
+      Phase 1 — empty state (draw)
+    -------------------------------------------------------------*/
+    .empty-state {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; padding: 40px 20px; text-align: center;
+      color: var(--fg-2); height: 100%;
+    }
+    .empty-state h3 {
+      margin: 0 0 8px; font-size: 16px; font-weight: 600; color: var(--fg);
+    }
+    .empty-state p { margin: 0; font-size: 13px; max-width: 280px; }
+    .step-strip {
+      display: flex; gap: 8px; margin-top: 28px;
+    }
+    .step-pip {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--line-strong);
+    }
+    .step-pip.active { background: var(--accent); }
+
+    /*-------------------------------------------------------------
+      Phase 2 — street picker list
+    -------------------------------------------------------------*/
+    .street-list {
+      display: flex; flex-direction: column; gap: 6px;
+      padding: 14px;
+    }
+    .street-item {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 14px;
+      cursor: pointer;
+      transition: border-color 0.12s ease, background 0.12s ease;
+    }
+    .street-item:hover {
+      border-color: var(--accent); background: var(--surface-2);
+    }
+    .street-item.selected {
+      border-color: var(--accent);
+      background: linear-gradient(180deg, #eff6ff 0%, #fafcff 100%);
+    }
+    .street-item .name {
+      font-weight: 600; font-size: 14px; color: var(--fg);
+    }
+    .street-item .meta {
+      font-size: 11px; color: var(--fg-2); margin-top: 3px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .launch-panel {
+      padding: 16px;
+      border-top: 1px solid var(--line);
+      background: var(--surface-2);
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .launch-row {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 12px; color: var(--fg-2);
+    }
+    .launch-row input {
+      background: var(--surface); border: 1px solid var(--line);
+      border-radius: 6px; padding: 4px 8px; width: 84px;
+      font-size: 12px; color: var(--fg); text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .launch-row .field-name { color: var(--fg-2); }
+    .launch-row .field-val-static {
+      color: var(--fg); font-weight: 500;
+    }
+
+    /*-------------------------------------------------------------
+      Phase 3 — chat-style transcript with avatar gutter
+    -------------------------------------------------------------*/
+    .msg {
+      margin-bottom: 14px;
+      animation: slideIn 0.18s ease;
+      max-width: 100%;
+      display: grid;
+      grid-template-columns: 32px 1fr;
+      gap: 10px;
+    }
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .msg.hidden-by-filter { display: none; }
+
+    .msg .avatar {
+      grid-column: 1;
+      width: 30px; height: 30px;
+      border-radius: 50%;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; line-height: 1;
+      flex: 0 0 auto;
+      box-shadow: var(--shadow-1);
+    }
+    .msg.assistant .avatar {
+      background: var(--robot-grad);
+      border: none;
+      color: white;
+      font-size: 14px;
+    }
+    .msg.tool .avatar { background: #fafbfc; color: var(--fg-2); }
+    .msg.peek .avatar { background: #fff8e8; border-color: #ffe5a8; color: #9a6b00; }
+    .msg.zoom .avatar { background: #fff0fb; border-color: #f8c5e7; color: #b91c8c; }
+    .msg.grade .avatar { background: var(--accent-soft); border-color: #cfe3fa; color: var(--accent); }
+    .msg.skip .avatar { color: var(--fg-3); }
+    .msg.system .avatar { background: var(--surface-2); color: var(--fg-3); }
+
+    .msg .col {
+      grid-column: 2;
+      min-width: 0;
+    }
+    .msg .head {
+      display: flex; align-items: baseline; gap: 8px;
+      margin-bottom: 5px;
+      font-size: 11px; color: var(--fg-3);
+      letter-spacing: 0.02em;
+    }
+    .msg .head .name { color: var(--fg-2); font-weight: 600; font-size: 12px; }
+    .msg .head .time { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+    .msg .body {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px 14px;
+      font-size: 13px; color: var(--fg);
+      line-height: 1.55;
+      word-wrap: break-word;
+      overflow-wrap: anywhere;
+      box-shadow: var(--shadow-1);
+    }
+    /* Markdown inside body */
+    .msg .body p { margin: 0; }
+    .msg .body p + p { margin-top: 8px; }
+    .msg .body strong { font-weight: 600; color: var(--fg); }
+    .msg .body em { font-style: italic; }
+    .msg .body code {
+      background: rgba(0,0,0,0.05);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: "SF Mono", Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+    .msg.assistant .body {
+      background: linear-gradient(180deg, #f0f7ff 0%, #ffffff 100%);
+      border-color: #d8e8fa;
+    }
+    .msg.tool .body .tool-line { font-size: 12px; color: var(--fg-2); }
+    .msg.tool .body .tool-line strong { color: var(--fg); font-weight: 600; }
+    .msg.peek .body { background: #fffaee; border-color: #ffe5a8; }
+    .msg.zoom .body { background: #fff5fc; border-color: #f8c5e7; }
+    .msg.grade .body {
+      background: var(--surface);
+      border-color: var(--line);
+      border-left: 3px solid var(--accent);
+      box-shadow: var(--shadow-2);
+    }
+    .msg.skip .body { color: var(--fg-2); font-style: italic; }
+    .msg.system .body {
+      background: var(--surface);
+      border-color: var(--line);
+      color: var(--fg-2);
+    }
+    .msg.system.error .body { background: #fff0ee; border-color: #ffd0c8; color: var(--poor); }
+    .msg.waypoint-banner {
+      display: block;
+      margin: 20px 0 14px;
+      padding: 9px 14px;
+      background: var(--accent);
+      border: none;
+      border-radius: 999px;
+      font-weight: 600; font-size: 12px;
+      color: white;
+      text-align: center;
+      letter-spacing: 0.02em;
+      box-shadow: 0 2px 6px rgba(0,122,255,0.30);
+    }
+
+    /* Chips inside cards (year tag, condition, etc.) */
+    .chip {
+      display: inline-block; padding: 2px 8px;
+      border-radius: 999px; font-size: 11px; font-weight: 600;
+      letter-spacing: 0;
+    }
+    .chip.year {
+      background: #eff6ff; color: var(--accent);
+      border: 1px solid #cfe3fa;
+      font-variant-numeric: tabular-nums;
+      font-weight: 500;
+    }
+    .chip.cond.Good { background: rgba(52,199,89,0.15); color: #1a7437; }
+    .chip.cond.Fair { background: rgba(255,149,0,0.18); color: #9c5500; }
+    .chip.cond.Poor { background: rgba(255,59,48,0.18); color: #b8231a; }
+    .chip.cond.unknown { background: var(--line); color: var(--fg-2); }
+
+    .msg img.viewport {
+      display: block;
+      width: 100%; max-width: 420px;
+      border-radius: 10px;
+      margin-top: 8px;
+      background: #f0f0f0;
+      border: 1px solid var(--line);
+    }
+    .msg .meta-row {
+      margin-top: 6px;
+      font-size: 11px; color: var(--fg-3);
+      font-variant-numeric: tabular-nums;
+    }
+    .msg .meta-row b { color: var(--fg-2); font-weight: 500; }
+
+    /* Evidence list inside a grade card — rounded rectangles, generous
+       padding so multi-line items wrap cleanly without the "stretched pill"
+       look. Single-line items still feel chip-like; long items become a
+       clean rounded rectangle. */
+    .grade-fields { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+    .grade-fields .grp { font-size: 12px; }
+    .grade-fields .grp .grp-name {
+      font-size: 10px; color: var(--fg-3); letter-spacing: 0.06em;
+      text-transform: uppercase; margin-bottom: 5px; font-weight: 600;
+    }
+    .grade-fields .pill-list {
+      display: flex; flex-wrap: wrap; gap: 6px;
+    }
+    .grade-fields .pill-list span {
+      display: inline-block;
+      background: var(--surface-2);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 5px 10px;
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--fg);
+      max-width: 100%;
+      box-sizing: border-box;
+    }
+    .grade-fields .pill-list.safety span {
+      background: #fff5f4; border-color: #ffd2cb; color: #b8231a;
+    }
+    .grade-fields .pill-list.surroundings span {
+      background: #f0f7ff; border-color: #cfe3fa; color: var(--accent);
+    }
+    .grade-fields .pill-list.inconsistencies span {
+      background: #fff8e8; border-color: #ffe5a8; color: #9c5500;
+    }
+
+    /* Auto-scroll indicator (when user scrolled up) */
+    .new-msg-jump { display: none !important; }
+    ._new-msg-jump-unused {
+      position: absolute; bottom: 22px; left: 50%;
+      transform: translateX(-50%);
+      background: var(--accent); color: white;
+      border: none; border-radius: 999px;
+      padding: 6px 16px; font-size: 12px; font-weight: 500;
+      cursor: pointer; box-shadow: var(--shadow);
+      display: none; z-index: 50;
+    }
+    .new-msg-jump.visible { display: block; }
+
+    /* Map agent cursor pulse */
+    .agent-cursor-icon {
+      position: relative;
+    }
+    .agent-pulse {
+      position: absolute;
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      background: rgba(0,122,255,0.30);
+      animation: pulseRing 1.6s ease-out infinite;
+      pointer-events: none;
+    }
+    @keyframes pulseRing {
+      0%   { transform: scale(0.4); opacity: 0.9; }
+      100% { transform: scale(2.6); opacity: 0; }
+    }
+
+    /* Override Leaflet defaults for cleaner light look */
+    .leaflet-container {
+      font: inherit;
+      background: #fafafa !important;
+    }
+    .leaflet-tooltip {
+      background: white;
+      border: 1px solid var(--line);
+      color: var(--fg);
+      font-size: 11px;
+      padding: 3px 7px;
+      border-radius: 6px;
+      box-shadow: var(--shadow);
+    }
+    .leaflet-tooltip-top:before, .leaflet-tooltip-bottom:before { display: none; }
+
+    /* ---- Hierarchy tree (shows live agent topology) ---- */
+    .hierarchy-tree {
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,255,255,0.6);
+      font-size: 11px;
+    }
+    .tree-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 12px; cursor: pointer; user-select: none;
+      font-size: 11px; font-weight: 600; color: var(--fg-2);
+      letter-spacing: 0.04em; text-transform: uppercase;
+    }
+    .tree-header:hover { background: rgba(0,0,0,0.02); }
+    .tree-toggle-btn {
+      background: none; border: none; cursor: pointer; padding: 0 4px;
+      font-size: 13px; color: var(--fg-2); line-height: 1;
+      transition: transform 0.15s;
+    }
+    .tree-body {
+      max-height: 140px; overflow-y: auto;
+      padding: 4px 12px 8px;
+    }
+    .tree-body.collapsed { display: none; }
+    .hierarchy-tree .tree-row {
+      display: flex; align-items: center; gap: 6px; cursor: pointer;
+      padding: 3px 4px; border-radius: 5px;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      transition: background 0.1s;
+    }
+    .hierarchy-tree .tree-row:hover { background: rgba(0,0,0,0.04); }
+    .hierarchy-tree .tree-row.tree-row-active { background: rgba(0,122,255,0.08); }
+    .hierarchy-tree .tree-captain { padding-left: 0; font-weight: 600; }
+    .hierarchy-tree .tree-surveyor { padding-left: 14px; }
+    .hierarchy-tree .tree-investigator { padding-left: 28px; opacity: 0.92; }
+    .hierarchy-tree .tree-swatch {
+      display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .hierarchy-tree .tree-glyph {
+      display: inline-block; width: 14px; text-align: center; opacity: 0.7;
+    }
+    .hierarchy-tree .tree-name { flex: 1; min-width: 0;
+                                  overflow: hidden;
+                                  text-overflow: ellipsis;
+                                  white-space: nowrap; }
+    .hierarchy-tree .tree-state {
+      font-size: 10px; padding: 1px 6px; border-radius: 4px;
+      background: rgba(0,0,0,0.05); color: var(--fg-2);
+    }
+    .hierarchy-tree .tree-state.running {
+      background: rgba(0,122,255,0.12); color: #007aff;
+    }
+    .hierarchy-tree .tree-state.completed {
+      background: rgba(52,199,89,0.12); color: #2a843e;
+    }
+    .hierarchy-tree .tree-state.failed,
+    .hierarchy-tree .tree-state.spawned {
+      background: rgba(0,0,0,0.05); color: var(--fg-2);
+    }
+    .hierarchy-tree .tree-meta {
+      font-size: 10px; color: var(--fg-2); flex-shrink: 0;
+    }
+
+    /* ---- Hierarchy event cards ---- */
+    .msg.spawn .body { font-size: 11px; opacity: 0.9; }
+    .msg.dispatch { border-left: 3px solid #ff9500; padding-left: 9px; }
+    .msg.claim { border-left: 3px solid #5ac8fa; padding-left: 9px; }
+    .msg.report { border-left: 3px solid #34c759; padding-left: 9px; }
+    .msg.redo { border-left: 3px solid #ff3b30; padding-left: 9px; }
+    .msg.captain .name { color: #5856d6; }
+    .msg.surveyor .name { color: #007aff; }
+    .msg.investigator .name { color: #ac8e68; }
+
+    @media (max-width: 880px) {
+      main.layout { grid-template-columns: 1fr; grid-template-rows: 60% 40%; }
+      aside.sidebar { border-left: none; border-top: 1px solid var(--line); }
+    }
+  </style>
+</head>
+<body>
+  <header class="bar">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      RoadWatch
+    </div>
+    <nav class="stats">
+      <span class="stat-pill"><span class="status-dot waiting" id="dot"></span><b id="status">idle</b></span>
+      <span class="stat-pill" id="stat-wp" style="display:none">point <b id="wp">—</b> / <b id="wpcap">—</b></span>
+      <button class="topbtn" id="newsurvey-btn" style="display:none" title="Reset and pick a different area">↻ New survey</button>
+      <button class="topbtn stop" id="stop-btn" style="display:none">⏹ Stop</button>
+    </nav>
+  </header>
+  <main class="layout">
+    <section class="map-stage">
+      <div id="map"></div>
+      <div class="map-banner" id="map-banner">Draw a polygon to begin</div>
+      <div class="map-side-action" id="map-side-action" style="display:none"></div>
+    </section>
+    <aside class="sidebar">
+      <div class="side-head" id="side-head">
+        <h2>Begin a survey</h2>
+        <div class="sub">Step 1 — outline the area you want surveyed on the map.</div>
+      </div>
+      <div class="side-filter" id="side-filter" style="display:none">
+        <label>FILTER</label>
+        <select id="wp-filter"><option value="all">All survey points</option></select>
+      </div>
+      <div class="hierarchy-tree" id="hierarchy-tree" style="display:none">
+        <div class="tree-header" onclick="toggleHierarchyTree()">
+          <span id="tree-header-label">Agent fleet</span>
+          <button class="tree-toggle-btn" id="tree-toggle-btn">▾</button>
+        </div>
+        <div class="tree-body" id="tree-body"></div>
+      </div>
+      <div class="side-feed" id="side-feed">
+        <div class="empty-state" id="empty-state">
+          <h3>Draw your polygon</h3>
+          <p>Use the polygon tool on the map to outline a street corridor. The map is centered on the Sunset Strip — a verified area with rich 360° imagery. Draw here or pan to any well-covered street.</p>
+          <div class="step-strip">
+            <span class="step-pip active"></span>
+            <span class="step-pip"></span>
+            <span class="step-pip"></span>
+          </div>
+        </div>
+      </div>
+      <button class="new-msg-jump" id="new-msg-jump">↓ new updates</button>
+    </aside>
+  </main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+<script>
+//=============================================================================
+// RoadWatch v2 — Apple-style light, sidebar right, chat-style transcript
+//=============================================================================
+
+const TIER_COLOR = {
+  Good: '#34c759', Fair: '#ff9500', Poor: '#ff3b30', unknown: '#86868b',
+};
+
+const slugFromPath = location.pathname.split('/').filter(Boolean)[1] || null;
+let phase = slugFromPath ? 'live' : 'draw';
+let slug = slugFromPath;
+
+let map, drawnItems, drawControl, polygonGeom = null;
+let streetLayers = [];        // {street, layer} after polygon picked
+let selectedStreetIds = new Set();
+let allStreets = [];          // {name, segments, length_m, ...}
+let walkerPolyline = null;
+let waypoints = {};           // wp_idx -> {lat, lon, marker, predicted_tier}
+let agentCursor = null;
+let agentPulseEl = null;
+let polylineLatLng = [];
+
+let offset = 0, runComplete = false, currentWp = -1, runStopRequested = false;
+let activeAgentFilter = null;   // agent_id string | null (hierarchy tree click)
+const stats = { turn: 0, cost: 0, budget: 0, wp: 0, wpcap: 0 };
+
+let activeFilter = 'all';
+let cardCounter = 0;
+let userScrolledUp = false;
+
+const sideFeed = document.getElementById('side-feed');
+const sideHead = document.getElementById('side-head');
+const sideFilter = document.getElementById('side-filter');
+const emptyState = document.getElementById('empty-state');
+const mapBanner = document.getElementById('map-banner');
+const mapSideAction = document.getElementById('map-side-action');
+const stopBtn = document.getElementById('stop-btn');
+const newMsgJump = document.getElementById('new-msg-jump');
+const newSurveyBtn = document.getElementById('newsurvey-btn');
+
+newSurveyBtn.addEventListener('click', () => {
+  if (phase === 'live' && !runComplete) {
+    if (!confirm('Abandon this run and start a new survey? '
+                 + 'You can also click "Stop" first to keep partial results.')) return;
+  }
+  // Hard reload to base /temporal — cleanest way to reset all state.
+  location.href = '/temporal';
+});
+
+//-----------------------------------------------------------------------------
+// Helpers
+//-----------------------------------------------------------------------------
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+// Lightweight markdown — escape first, then re-introduce safe inline HTML.
+// Supports: **bold**, *italic*, `code`, paragraph breaks (blank line),
+// single line breaks. No raw HTML allowed through.
+function mdToHtml(s) {
+  let out = escapeHtml(s);
+  // Inline code first so * inside code isn't interpreted
+  out = out.replace(/`([^`\n]+?)`/g, '<code>$1</code>');
+  // Bold **text**
+  out = out.replace(/\*\*([^*\n][^*]*?)\*\*/g, '<strong>$1</strong>');
+  // Italic *text* — guard against '* ' bullet starts and ' *...* ' spaced
+  out = out.replace(/(^|[^\w*])\*([^*\n]+?)\*(?!\w)/g, '$1<em>$2</em>');
+  // Paragraph + line breaks
+  out = out.replace(/\n\n+/g, '</p><p>');
+  out = out.replace(/\n/g, '<br>');
+  return '<p>' + out + '</p>';
+}
+function elMd(tag, props, mdText) {
+  const e = el(tag, props);
+  e.innerHTML = mdToHtml(mdText || '');
+  return e;
+}
+function setStatus(s, l) {
+  document.getElementById('dot').className = 'status-dot ' + s;
+  document.getElementById('status').textContent = l;
+}
+function refreshStats() {
+  if (stats.wp != null) document.getElementById('wp').textContent = stats.wp;
+  if (stats.wpcap) document.getElementById('wpcap').textContent = stats.wpcap;
+}
+function showStat(id) { document.getElementById(id).style.display = ''; }
+
+
+//-----------------------------------------------------------------------------
+// Map setup — light tiles, no labels by default for a clean canvas
+//-----------------------------------------------------------------------------
+(function initMap() {
+  // Initial view: Sunset Strip, West Hollywood — verified 1,200+ panos, ideal demo corridor.
+  map = L.map('map', { zoomControl: true, attributionControl: true })
+        .setView([34.0966, -118.3545], 15);
+  // CARTO Voyager — colourful, full labels, MapTiler-OMT-like styling, free, no API key
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    maxZoom: 20,
+    subdomains: 'abcd',
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · © <a href="https://carto.com/attributions">CARTO</a>',
+  }).addTo(map);
+  drawnItems = new L.FeatureGroup().addTo(map);
+})();
+
+//-----------------------------------------------------------------------------
+// Phase routing
+//-----------------------------------------------------------------------------
+if (phase === 'live') enterLivePhase();
+else enterDrawPhase();
+
+//-----------------------------------------------------------------------------
+// Phase 1 — DRAW
+//-----------------------------------------------------------------------------
+function enterDrawPhase() {
+  phase = 'draw';
+  setStatus('waiting', 'awaiting polygon');
+  mapBanner.textContent = 'Draw a polygon over the area you want surveyed';
+  mapBanner.classList.remove('subtle');
+  if (!drawControl) {
+    drawControl = new L.Control.Draw({
+      position: 'topleft',
+      draw: {
+        polygon: { allowIntersection: false, showArea: false,
+          shapeOptions: { color: '#007aff', weight: 2, fillOpacity: 0.06 } },
+        rectangle: false, circle: false, marker: false, polyline: false, circlemarker: false,
+      },
+      edit: { featureGroup: drawnItems, edit: false, remove: true },
+    });
+    map.addControl(drawControl);
+  }
+  map.on(L.Draw.Event.CREATED, async (e) => {
+    drawnItems.clearLayers();
+    drawnItems.addLayer(e.layer);
+    polygonGeom = e.layer.toGeoJSON().geometry;
+    await enterPickPhase(polygonGeom);
+  });
+  map.on(L.Draw.Event.DELETED, () => { polygonGeom = null; enterDrawPhase(); });
+}
+
+//-----------------------------------------------------------------------------
+// Phase 2 — PICK STREET
+//-----------------------------------------------------------------------------
+async function enterPickPhase(polygon) {
+  phase = 'pick';
+  setStatus('waiting', 'finding streets…');
+  newSurveyBtn.style.display = 'inline-flex';
+  mapBanner.textContent = 'Searching for streets in your polygon…';
+  sideHead.innerHTML = `
+    <h2>Choose a street</h2>
+    <div class="sub">Click any blue line on the map, or pick from this list.</div>`;
+  sideFeed.innerHTML = `
+    <div class="empty-state">
+      <h3>Looking for streets…</h3>
+      <p>Querying OpenStreetMap.</p>
+    </div>`;
+
+  let data;
+  try {
+    const r = await fetch('/api/temporal/streets-in-polygon', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({polygon}),
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    data = await r.json();
+  } catch (err) {
+    setStatus('error', 'overpass error');
+    sideFeed.innerHTML = `<div class="empty-state"><h3>Could not fetch streets</h3><p>${escapeHtml(err.message)}</p></div>`;
+    return;
+  }
+  if (!data.streets || !data.streets.length) {
+    setStatus('waiting', 'no streets in polygon');
+    mapBanner.textContent = 'No named streets in that polygon — try a wider area';
+    sideFeed.innerHTML = `<div class="empty-state"><h3>No streets found</h3><p>Try drawing a wider polygon. Unnamed alleys aren't returned.</p></div>`;
+    return;
+  }
+
+  setStatus('waiting', `${data.streets.length} streets — pick one`);
+  mapBanner.textContent = `${data.streets.length} streets in this area — click to select`;
+  mapBanner.classList.add('subtle');
+  allStreets = data.streets;
+
+  // Render each street as a clickable polyline on the map
+  streetLayers.forEach(({layer}) => map.removeLayer(layer));
+  streetLayers = [];
+  allStreets.forEach((s, i) => {
+    const lyrs = [];
+    s.segments.forEach(seg => {
+      const ll = seg.map(([lon, lat]) => [lat, lon]);
+      const line = L.polyline(ll, {
+        color: '#007aff', weight: 4, opacity: 0.62,
+        className: 'street-pickable',
+      });
+      line.on('mouseover', () => line.setStyle({weight: 6, opacity: 0.95}));
+      line.on('mouseout', () => {
+        if (!selectedStreetIds.has(i)) line.setStyle({weight: 4, opacity: 0.62});
+      });
+      line.on('click', () => toggleStreet(i));
+      line.bindTooltip(s.name, {sticky: true, direction: 'top', offset: [0, -6]});
+      lyrs.push(line);
+    });
+    const fg = L.featureGroup(lyrs).addTo(map);
+    streetLayers.push({street: s, layer: fg, lines: lyrs, idx: i});
+  });
+  // Fit map to all streets
+  const allBounds = L.featureGroup(streetLayers.flatMap(s => s.lines)).getBounds();
+  if (allBounds.isValid()) map.fitBounds(allBounds, {padding: [40, 40]});
+
+  // Sidebar: street list
+  renderStreetList();
+
+  // Map side action: Select all / continue
+  mapSideAction.style.display = 'flex';
+  mapSideAction.innerHTML = `
+    <span class="label">Selection</span>
+    <button class="pill-btn" id="select-all-btn">Select all (${allStreets.length})</button>
+    <button class="pill-btn" id="select-clear-btn">Clear</button>
+    <button class="pill-btn primary" id="launch-btn" disabled>Launch survey →</button>
+  `;
+  document.getElementById('select-all-btn').onclick = () => {
+    selectedStreetIds = new Set(allStreets.map((_,i) => i));
+    refreshStreetSelectionStyles();
+    renderStreetList();
+    refreshLaunchButton();
+  };
+  document.getElementById('select-clear-btn').onclick = () => {
+    selectedStreetIds.clear();
+    refreshStreetSelectionStyles();
+    renderStreetList();
+    refreshLaunchButton();
+  };
+  document.getElementById('launch-btn').onclick = openLaunchPanel;
+  refreshLaunchButton();
+}
+
+function toggleStreet(i) {
+  if (selectedStreetIds.has(i)) selectedStreetIds.delete(i);
+  else selectedStreetIds.add(i);
+  refreshStreetSelectionStyles();
+  renderStreetList();
+  refreshLaunchButton();
+}
+
+function refreshStreetSelectionStyles() {
+  streetLayers.forEach(({lines, idx}) => {
+    const sel = selectedStreetIds.has(idx);
+    lines.forEach(line => line.setStyle({
+      color: sel ? '#0050b3' : '#007aff',
+      weight: sel ? 6 : 4,
+      opacity: sel ? 0.96 : 0.62,
+    }));
+  });
+}
+
+function refreshLaunchButton() {
+  const btn = document.getElementById('launch-btn');
+  if (!btn) return;
+  const n = selectedStreetIds.size;
+  btn.disabled = n === 0;
+  btn.textContent = n === 0 ? 'Pick a street →' :
+                    n === 1 ? 'Launch on this street →' :
+                    `Launch on ${n} streets →`;
+}
+
+function renderStreetList() {
+  sideFeed.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'street-list';
+  allStreets.forEach((s, i) => {
+    const el = document.createElement('div');
+    el.className = 'street-item' + (selectedStreetIds.has(i) ? ' selected' : '');
+    el.innerHTML = `
+      <div class="name">${escapeHtml(s.name)}</div>
+      <div class="meta">${(s.length_m).toFixed(0)} m · ${s.n_segments} segment${s.n_segments>1?'s':''}${s.highway ? ' · ' + escapeHtml(s.highway) : ''}</div>
+    `;
+    el.onclick = () => toggleStreet(i);
+    el.onmouseenter = () => streetLayers[i]?.lines.forEach(l => l.setStyle({weight: 6, opacity: 0.95}));
+    el.onmouseleave = () => streetLayers[i]?.lines.forEach(l => {
+      const sel = selectedStreetIds.has(i);
+      l.setStyle({color: sel ? '#0050b3' : '#007aff', weight: sel ? 6 : 4, opacity: sel ? 0.96 : 0.62});
+    });
+    wrap.appendChild(el);
+  });
+  sideFeed.appendChild(wrap);
+}
+
+function openLaunchPanel() {
+  const sel = [...selectedStreetIds].map(i => allStreets[i]);
+  if (sel.length === 0) return;
+
+  // For multi-select v2 MVP, we run the FIRST selected street and queue the rest.
+  // Backend currently runs one street per slug — we'll launch them sequentially.
+  sideHead.innerHTML = `
+    <h2>Configure & launch</h2>
+    <div class="sub">${sel.length} street${sel.length>1?'s':''} selected</div>`;
+  sideFeed.innerHTML = `
+    <div class="launch-panel">
+      <div class="launch-row"><span class="field-name">Streets</span><span class="field-val-static">${sel.length} chosen</span></div>
+      <div class="launch-row"><span class="field-name">Total length</span><span class="field-val-static">${sel.reduce((a,s)=>a+s.length_m,0).toFixed(0)} m</span></div>
+
+      <div class="launch-row"><span class="field-name">Survey-point spacing (m)</span><input id="opt-spacing" type="number" value="50" min="20" max="200" oninput="updatePointCount()"></div>
+      <div class="launch-row"><span class="field-name">Survey points</span><span class="field-val-static" id="auto-point-count">—</span></div>
+      <button class="pill-btn primary" id="launch-confirm" style="margin-top:8px">Begin survey →</button>
+      <button class="pill-btn" id="launch-back">← back</button>
+    </div>
+  `;
+  document.getElementById('launch-confirm').onclick = () => launchAll(sel);
+  document.getElementById('launch-back').onclick = () => renderStreetList();
+  updatePointCount();
+}
+
+function updatePointCount() {
+  const el = document.getElementById('auto-point-count');
+  if (!el) return;
+  const spacing = parseFloat(document.getElementById('opt-spacing')?.value) || 50;
+  const totalLen = allStreets
+    .filter((_, i) => selectedStreetIds.has(i))
+    .reduce((a, s) => a + s.length_m, 0);
+  if (!totalLen) { el.textContent = '—'; return; }
+  const n = Math.max(1, Math.round(totalLen / spacing));
+  el.textContent = `${n} point${n !== 1 ? 's' : ''}`;
+}
+
+async function launchAll(streets) {
+  // For MVP: launch the first street, navigate to its slug. Future: queue + sequential.
+  const street = streets[0];
+  const mode = 'hierarchy';
+  const payload = {
+    name: street.name,
+    segments: street.segments,
+    waypoint_spacing_m: parseFloat(document.getElementById('opt-spacing').value),
+    per_waypoint_turn_cap: 40,
+    max_age_years: 12,
+    budget_cap_usd: 999,
+    mode,
+    n_surveyor_slots: 3,
+    n_investigator_slots: 2,
+  };
+
+  // Show "launching..." in the banner so the user knows something's happening
+  mapBanner.style.display = 'block';
+  mapBanner.classList.remove('subtle');
+  mapBanner.textContent = `Launching ${street.name}…`;
+
+  let resp;
+  try {
+    const r = await fetch('/api/temporal/start', {
+      method: 'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) {
+      const txt = await r.text();
+      let detail = txt;
+      try { detail = JSON.parse(txt).detail || txt; } catch (_) {}
+      throw new Error(detail);
+    }
+    resp = await r.json();
+  } catch (err) {
+    // Don't strand the user — restore the street picker so they can pick again
+    setStatus('error', 'launch failed');
+    mapBanner.classList.remove('subtle');
+    mapBanner.textContent = `${err.message} — pick a different street or redraw the polygon.`;
+    sideHead.innerHTML = `
+      <h2>Try a different street</h2>
+      <div class="sub" style="color:var(--poor)">${escapeHtml(err.message)}</div>
+    `;
+    renderStreetList();
+    // Bring back the bottom-left pill controls
+    if (mapSideAction.style.display === 'none') {
+      mapSideAction.style.display = 'flex';
+    }
+    refreshLaunchButton();
+    setStatus('waiting', 'awaiting selection');
+    // Auto-clear the error banner after 7s so it stops crowding the map
+    setTimeout(() => {
+      if (phase === 'pick') {
+        mapBanner.classList.add('subtle');
+        mapBanner.textContent = `${allStreets.length} streets in this area — click to select`;
+      }
+    }, 7000);
+    return;
+  }
+  // Persist selected-street queue to sessionStorage for "next street" hint
+  if (streets.length > 1) {
+    sessionStorage.setItem('roadwatch_street_queue',
+      JSON.stringify({slug: resp.slug, queued: streets.slice(1).map(s => s.name)}));
+  }
+  location.href = `/temporal/${encodeURIComponent(resp.slug)}`;
+}
+
+function addStreetQueueIndicator(streets) {
+  // Optional hint — we'll use the queue more in a future iteration
+}
+
+//-----------------------------------------------------------------------------
+// Phase 3 — LIVE
+//-----------------------------------------------------------------------------
+async function enterLivePhase() {
+  phase = 'live';
+  setStatus('waiting', 'connecting…');
+  newSurveyBtn.style.display = 'inline-flex';
+
+
+  // Reset sidebar layout
+  sideHead.innerHTML = `<h2>Survey in progress</h2><div class="sub" id="side-sub">connecting…</div>`;
+  sideFilter.style.display = 'flex';
+  sideFeed.innerHTML = '';
+  emptyState && emptyState.remove();
+
+  // Show the stop button
+  stopBtn.style.display = 'inline-flex';
+  stopBtn.onclick = onStopClick;
+
+  // Show waypoint counter
+  showStat('stat-wp');
+
+  // Wait for bundle
+  let bundle = null;
+  for (let attempt = 0; attempt < 12; attempt++) {
+    try {
+      const r = await fetch(`/api/walker/${slug}/bundle`);
+      if (r.ok) {
+        const b = await r.json();
+        if (b.config && Object.keys(b.config).length > 0) { bundle = b; break; }
+      }
+    } catch (_) {}
+    await new Promise(res => setTimeout(res, 500));
+  }
+  if (!bundle) {
+    setStatus('error', 'bundle unavailable');
+    sideFeed.innerHTML = `<div class="empty-state" style="color:var(--poor)"><h3>Run not found</h3><p>Could not load bundle for ${escapeHtml(slug)}.</p></div>`;
+    return;
+  }
+
+  stats.budget = bundle.config.budget_cap_usd || 0;
+  stats.wpcap = bundle.config.n_waypoints || 0;
+  refreshStats();
+  document.getElementById('side-sub').textContent =
+    `${bundle.config.street_name || 'street'} · ${bundle.config.n_waypoints} survey points`;
+
+  // Polyline (subtle gray)
+  if (bundle.street.features?.length) {
+    for (const f of bundle.street.features) {
+      if (f.geometry.type === 'LineString') {
+        const coords = f.geometry.coordinates.map(([lon, lat]) => [lat, lon]);
+        polylineLatLng.push(...coords);
+        walkerPolyline = L.polyline(coords, {color: '#1d1d1f', weight: 4, opacity: 0.7, dashArray: '6,5'}).addTo(map);
+      }
+    }
+    if (polylineLatLng.length) map.fitBounds(walkerPolyline.getBounds(), {padding: [60, 60]});
+  }
+
+  // Waypoint markers — small, subtle; NUMBERED only on hover.
+  // White fill + dark border is high-contrast against OSM colour tiles.
+  for (const f of (bundle.waypoints.features || [])) {
+    const idx = f.properties.waypoint_idx;
+    const lat = f.geometry.coordinates[1];
+    const lon = f.geometry.coordinates[0];
+    const marker = L.circleMarker([lat, lon], {
+      radius: 7, color: '#1d1d1f', weight: 2.5, fillColor: '#ffffff', fillOpacity: 1,
+    }).addTo(map);
+    marker.bindTooltip(`${idx + 1}`, {direction: 'top', offset: [0,-6], className: ''});
+    marker.on('click', () => {
+      const target = `wp-${idx}`;
+      applyFilter(activeFilter === target ? 'all' : target);
+    });
+    waypoints[idx] = {lat, lon, marker, predicted_tier: null};
+
+    const opt = document.createElement('option');
+    opt.value = `wp-${idx}`;
+    opt.textContent = `Survey point ${idx + 1}`;
+    document.getElementById('wp-filter').appendChild(opt);
+  }
+  document.getElementById('wp-filter').onchange = (e) => applyFilter(e.target.value);
+
+  // Agent cursor with pulse — created on first move
+  setStatus('waiting', 'prefetching panos');
+  mapBanner.textContent = 'Prefetching Mapillary panos for the corridor…';
+  mapBanner.classList.remove('subtle');
+
+  // Sidebar feed scroll listener
+  sideFeed.addEventListener('scroll', onFeedScroll, {passive: true});
+
+  // Start polling status + trace + hierarchy (the last is no-op until
+  // hierarchy events appear, then it lights up the tree panel)
+  pollStatus();
+  pollTrace();
+  pollHierarchy();
+}
+
+async function onStopClick() {
+  if (runComplete || runStopRequested) return;
+  if (!confirm('Stop the agent? Findings already recorded will be preserved.')) return;
+  runStopRequested = true;
+  stopBtn.disabled = true;
+  stopBtn.textContent = '⏳ stopping…';
+  try {
+    await fetch(`/api/temporal/runs/${slug}/stop`, {method:'POST'});
+    pushSystem('Stop requested. The agent will exit at the next safe checkpoint.');
+  } catch (err) {
+    runStopRequested = false; stopBtn.disabled = false;
+    stopBtn.textContent = '⏹ Stop';
+    pushSystem('Stop failed: ' + err.message, true);
+  }
+}
+
+let prefetchHidden = false;
+async function pollStatus() {
+  try {
+    const r = await fetch(`/api/temporal/runs/${slug}/status`);
+    if (r.ok) {
+      const s = await r.json();
+      if (s.phase === 'prefetching') {
+        mapBanner.textContent = s.message || 'preparing panos…';
+      } else if (s.phase === 'running' || s.phase === 'completed' || s.phase === 'completed_prior') {
+        if (!prefetchHidden) {
+          prefetchHidden = true;
+          const yb = s.year_breakdown || {};
+          const yearStr = Object.keys(yb).length
+            ? '· years: ' + Object.entries(yb).map(([y,n]) => `${y}×${n}`).join(', ')
+            : '';
+          mapBanner.textContent = `${s.n_candidates ?? '?'} candidates ready ${yearStr}`;
+          mapBanner.classList.add('subtle');
+          setTimeout(() => mapBanner.style.display = 'none', 4000);
+          setStatus('live', 'live');
+        }
+      } else if (s.phase === 'errored') {
+        mapBanner.textContent = 'Error: ' + (s.error || 'unknown');
+        setStatus('error', 'errored');
+        return;
+      }
+    }
+  } catch (_) {}
+  if (!runComplete) setTimeout(pollStatus, 1500);
+}
+
+//-----------------------------------------------------------------------------
+// Auto-scroll: stay anchored at bottom unless user scrolled up
+//-----------------------------------------------------------------------------
+function onFeedScroll() {}
+function maybeScrollToBottom() {
+  sideFeed.scrollTop = sideFeed.scrollHeight;
+}
+
+//-----------------------------------------------------------------------------
+// Map agent cursors — multi-cursor in hierarchy mode, primary in single mode
+//-----------------------------------------------------------------------------
+// `agentCursor` / `agentPulseEl` track the PRIMARY cursor (last activity).
+// `cursorsByAgent` tracks per-surveyor cursors so multiple Point Surveyors
+// can pulse simultaneously on the map during a hierarchy run.
+const cursorsByAgent = new Map(); // agent_id -> {cursor, pulse}
+
+function workerColor(id) {
+  let h = 0;
+  const s = String(id || '');
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
+  return `hsl(${h}, 70%, 55%)`;
+}
+
+function moveAgentTo(lat, lon, agentId) {
+  // Primary cursor (always)
+  if (!agentCursor) {
+    agentCursor = L.circleMarker([lat, lon], {
+      radius: 9, color: '#007aff', weight: 3,
+      fillColor: '#ffffff', fillOpacity: 1,
+      className: 'agent-cursor',
+      interactive: false,
+    }).addTo(map);
+    const pulseIcon = L.divIcon({
+      className: 'agent-cursor-icon',
+      html: '<div class="agent-pulse"></div><div class="agent-pulse" style="animation-delay:0.5s"></div>',
+      iconSize: [22, 22], iconAnchor: [11, 11],
+    });
+    agentPulseEl = L.marker([lat, lon], {icon: pulseIcon,
+                                            interactive: false,
+                                            zIndexOffset: -100}).addTo(map);
+  } else {
+    agentCursor.setLatLng([lat, lon]);
+    agentPulseEl.setLatLng([lat, lon]);
+  }
+  // Per-agent cursor (hierarchy mode)
+  if (agentId) {
+    const color = workerColor(agentId);
+    let entry = cursorsByAgent.get(agentId);
+    if (!entry) {
+      const cur = L.circleMarker([lat, lon], {
+        radius: 7, color: '#ffffff', weight: 2,
+        fillColor: color, fillOpacity: 0.92,
+        interactive: false,
+      }).addTo(map);
+      entry = {cursor: cur, color};
+      cursorsByAgent.set(agentId, entry);
+    } else {
+      entry.cursor.setLatLng([lat, lon]);
+    }
+  }
+  map.flyTo([lat, lon], Math.max(map.getZoom(), 17),
+             {duration: 0.6, animate: true});
+}
+
+function freezeAgentCursor(agentId, tier) {
+  const entry = cursorsByAgent.get(agentId);
+  if (!entry) return;
+  const c = TIER_COLOR[tier] || entry.color;
+  entry.cursor.setStyle({fillColor: c, fillOpacity: 0.55, color: '#1d1d1f'});
+}
+
+function recolorWaypoint(idx, predicted) {
+  const wp = waypoints[idx]; if (!wp) return;
+  wp.predicted_tier = predicted;
+  const fill = TIER_COLOR[predicted] || '#86868b';
+  const isSelected = activeFilter === `wp-${idx}`;
+  wp.marker.setStyle({
+    fillColor: fill, fillOpacity: 0.96,
+    color: isSelected ? '#007aff' : '#1d1d1f',
+    weight: isSelected ? 3.5 : 1.5,
+    radius: 7,
+  });
+}
+
+//-----------------------------------------------------------------------------
+// Filter
+//-----------------------------------------------------------------------------
+function applyFilter(value) {
+  activeFilter = value;
+  const sel = document.getElementById('wp-filter');
+  if (sel) sel.value = value;
+  // Highlight selected waypoint marker; restore others
+  for (const [idxStr, wp] of Object.entries(waypoints)) {
+    const isSelected = value !== 'all' && value === `wp-${idxStr}`;
+    wp.marker.setStyle({
+      color: isSelected ? '#007aff' : '#1d1d1f',
+      weight: isSelected ? 3.5 : 2.5,
+    });
+  }
+  _refreshVisibility();
+}
+function applyAgentFilter(agentId) {
+  activeAgentFilter = (activeAgentFilter === agentId) ? null : agentId;
+  document.querySelectorAll('.tree-row').forEach(r => {
+    r.classList.toggle('tree-row-active',
+      !!activeAgentFilter && r.dataset.agentId === activeAgentFilter);
+  });
+  _refreshVisibility();
+}
+function _refreshVisibility() {
+  for (const card of sideFeed.children) {
+    if (!card.dataset) continue;
+    const wp = card.dataset.wp;
+    const always = card.dataset.always === '1';
+    const cAgent = card.dataset.agentId;
+    const passWp = activeFilter === 'all' || always
+      || (wp && `wp-${wp}` === activeFilter);
+    const passAgent = !activeAgentFilter || always
+      || (cAgent && cAgent === activeAgentFilter);
+    card.classList.toggle('hidden-by-filter', !passWp || !passAgent);
+  }
+}
+function toggleHierarchyTree() {
+  const body = document.getElementById('tree-body');
+  const btn = document.getElementById('tree-toggle-btn');
+  const collapsed = body.classList.toggle('collapsed');
+  btn.style.transform = collapsed ? 'rotate(-90deg)' : '';
+}
+
+//-----------------------------------------------------------------------------
+// Card builders — every interpolation is escaped; no raw HTML leaks
+//-----------------------------------------------------------------------------
+// Avatar glyphs per message class — small SVGs / unicode for visual identity.
+const AVATAR_GLYPH = {
+  assistant: '🤖',
+  tool: '👁',
+  peek: '✦',
+  zoom: '⌖',
+  grade: '✓',
+  skip: '↷',
+  system: '•',
+  // Hierarchy roles
+  captain: '⌂',
+  surveyor: '◉',
+  investigator: '◎',
+  // Hierarchy event types
+  spawn: '✶',
+  dispatch: '⇉',
+  claim: '✎',
+  handoff: '⇄',
+  redo: '⟲',
+  report: '⤴',
+};
+function avatarFor(cls) {
+  // pick the most-specific class match
+  const keys = (cls || '').split(/\s+/);
+  for (const k of keys) if (AVATAR_GLYPH[k]) return AVATAR_GLYPH[k];
+  return '•';
+}
+
+function pushMsg({cls, name, time, bodyEls, wp, always = false, agentId = null}) {
+  emptyState && emptyState.remove();
+  const m = document.createElement('div');
+  m.className = 'msg ' + (cls || '');
+  m.dataset.id = String(++cardCounter);
+  m.dataset.wp = wp != null ? String(wp) : '';
+  m.dataset.always = always ? '1' : '0';
+  if (agentId) m.dataset.agentId = agentId;
+
+  // Avatar gutter
+  const av = document.createElement('div');
+  av.className = 'avatar';
+  av.textContent = avatarFor(cls);
+  m.appendChild(av);
+
+  // Right column — head + body
+  const col = document.createElement('div');
+  col.className = 'col';
+
+  const head = document.createElement('div');
+  head.className = 'head';
+  if (name) {
+    const sp = document.createElement('span');
+    sp.className = 'name';
+    sp.textContent = name;
+    head.appendChild(sp);
+  }
+  if (time) {
+    const sp = document.createElement('span');
+    sp.className = 'time';
+    sp.textContent = time;
+    head.appendChild(sp);
+  }
+  col.appendChild(head);
+
+  const body = document.createElement('div');
+  body.className = 'body';
+  for (const el of bodyEls) body.appendChild(el);
+  col.appendChild(body);
+  m.appendChild(col);
+
+  const _passWp = activeFilter === 'all' || always
+    || (wp != null && `wp-${wp}` === activeFilter);
+  const _passAgent = !activeAgentFilter || always
+    || (agentId && agentId === activeAgentFilter);
+  if (!_passWp || !_passAgent) m.classList.add('hidden-by-filter');
+  sideFeed.appendChild(m);
+  maybeScrollToBottom();
+  return m;
+}
+function pushBanner(text) {
+  emptyState && emptyState.remove();
+  const m = document.createElement('div');
+  m.className = 'msg waypoint-banner';
+  m.dataset.always = '1';
+  m.textContent = text;
+  sideFeed.appendChild(m);
+  maybeScrollToBottom();
+}
+function pushSystem(text, isError) {
+  const t = document.createElement('div');
+  t.textContent = text;
+  pushMsg({cls: 'system' + (isError ? ' error' : ''), name: 'system',
+           bodyEls: [t], always: true});
+}
+function el(tag, props, ...kids) {
+  const e = document.createElement(tag);
+  if (props) for (const [k, v] of Object.entries(props)) {
+    if (k === 'class') e.className = v;
+    else if (k === 'style') e.style.cssText = v;
+    else if (k === 'text') e.textContent = v;
+    else e.setAttribute(k, v);
+  }
+  for (const k of kids) if (k) e.appendChild(typeof k === 'string' ? document.createTextNode(k) : k);
+  return e;
+}
+function chip(cls, text) { return el('span', {class: 'chip ' + (cls || ''), text}); }
+
+//-----------------------------------------------------------------------------
+// Trace event renderer
+//-----------------------------------------------------------------------------
+function renderEvent(ev) {
+  switch (ev.record_type) {
+    case 'walker_run_header': {
+      const t = el('div', null,
+        document.createTextNode(`Survey of ${ev.street_name || ''}: `),
+        el('b', {text: String(ev.n_waypoints)}),
+        document.createTextNode(' survey points, '),
+        el('b', {text: String(ev.n_candidates_in_corridor)}),
+        document.createTextNode(' panos in corridor.'));
+      pushMsg({cls: 'system', name: 'system · run started', bodyEls: [t], always: true});
+      break;
+    }
+    case 'waypoint_started': {
+      currentWp = ev.waypoint_idx;
+      stats.wp = ev.waypoint_idx + 1;
+      refreshStats();
+      const wp = waypoints[ev.waypoint_idx];
+      if (wp) moveAgentTo(wp.lat, wp.lon);
+      pushBanner(`Survey point ${ev.waypoint_idx + 1} of ${stats.wpcap}`);
+      break;
+    }
+    case 'turn_assistant': {
+      stats.turn = ev.turn;
+      stats.cost = ev.budget_used_usd || stats.cost;
+      refreshStats();
+      const text = (ev.text || '').trim();
+      const tools = (ev.tool_uses || []).map(t => t.name);
+      if (!text && !tools.length) break;
+      const bodyEls = [];
+      if (text) bodyEls.push(elMd('div', null, text));
+      if (tools.length) {
+        bodyEls.push(el('div', {class: 'meta-row',
+          text: '→ ' + tools.join(' · ')}));
+      }
+      const timeStr = '';
+      const _sp = ev.point_idx != null ? `SP ${ev.point_idx + 1}` : '';
+      const _aName = ev.agent_role === 'captain' ? 'captain'
+                   : ev.agent_role === 'surveyor' ? `surveyor · ${_sp}`
+                   : ev.agent_role === 'investigator' ? `investigator · ${_sp} · y${ev.year || '?'}`
+                   : 'agent';
+      pushMsg({cls: 'assistant ' + (ev.agent_role || ''), name: _aName, time: timeStr,
+               bodyEls, wp: ev.waypoint_idx ?? ev.point_idx,
+               agentId: ev.agent_id || null});
+      break;
+    }
+    case 'tool_result': {
+      const sd = ev.state_delta || {};
+      const tname = ev.tool_name;
+      const wp = ev.waypoint_idx ?? ev.point_idx;
+      const pmTool = (opts) => pushMsg({...opts, agentId: ev.agent_id || null});
+      if (tname === 'find_candidates') {
+        const totals = sd.total_per_year ? Object.entries(sd.total_per_year)
+          .sort((a,b) => b[0]-a[0]).map(([y,n]) => `${y}×${n}`).join(', ') : '';
+        const dupCount = (sd.suppressed_duplicates || []).length;
+        const bodyEls = [el('div', {class: 'tool-line'},
+          el('strong', {text: 'find_candidates'}),
+          document.createTextNode(' · ' + (ev.summary || ''))),
+        ];
+        if (totals) {
+          bodyEls.push(el('div', {class: 'meta-row',
+            text: `Available in radius: ${totals}`}));
+        }
+        if (dupCount > 0) {
+          bodyEls.push(el('div', {class: 'meta-row',
+            style: 'color:var(--fair)',
+            text: `${dupCount} image${dupCount>1?'s':''} appeared under multiple dates — suppressed to avoid double-counting.`}));
+        }
+        pmTool({cls: 'tool', name: 'searching', bodyEls, wp});
+      } else if (tname === 'peek_candidate') {
+        const peek = sd.peek || {};
+        const bodyEls = [el('div', {class: 'tool-line'},
+          el('strong', {text: 'peek'}),
+          document.createTextNode(' '), chip('year', String(sd.year ?? '?')),
+          document.createTextNode(' · '),
+          el('span', {text: peek.usable ? 'usable' : 'unusable'}),
+          document.createTextNode(' · ' + (peek.rig || '?')),
+          document.createTextNode(' · ' + (peek.time_of_day || '?'))
+        )];
+        if (peek.summary) {
+          bodyEls.push(el('div', {class: 'meta-row',
+            style: 'font-style:italic;color:var(--fg-2)',
+            text: '”' + peek.summary + '”'}));
+        }
+        pmTool({cls: 'peek', name: 'haiku · pano quality screen', bodyEls, wp});
+      } else if (tname === 'look') {
+        const url = sd.viewport_path ? `/api/walker/${slug}/file/${sd.viewport_path}` : '';
+        const bodyEls = [el('div', {class: 'tool-line'},
+          el('strong', {text: 'look'}),
+          document.createTextNode(' '), chip('year', String(sd.year ?? '?')),
+          document.createTextNode(` · yaw ${sd.yaw_deg ?? 0}° · pitch ${sd.pitch_deg ?? 0}° · hfov ${sd.hfov_deg ?? 0}°`)
+        )];
+        if (sd.purpose) bodyEls.push(el('div', {class: 'meta-row',
+          style: 'font-style:italic', text: '”' + sd.purpose + '”'}));
+        if (url) {
+          const img = el('img', {class: 'viewport', src: url, loading: 'lazy'});
+          bodyEls.push(img);
+        }
+        pmTool({cls: 'tool', name: 'looking at the road', bodyEls, wp});
+      } else if (tname === 'look_around') {
+        const url = sd.viewport_path ? `/api/walker/${slug}/file/${sd.viewport_path}` : '';
+        const bodyEls = [el('div', {class: 'tool-line'},
+          el('strong', {text: 'look_around'}),
+          document.createTextNode(' '), chip('year', String(sd.year ?? '?')),
+          document.createTextNode(` · 4-way scan at pitch ${sd.pitch_deg ?? 0}°`)
+        )];
+        if (sd.purpose) bodyEls.push(el('div', {class: 'meta-row',
+          style: 'font-style:italic', text: '”' + sd.purpose + '”'}));
+        if (url) bodyEls.push(el('img', {class: 'viewport', src: url, loading: 'lazy'}));
+        pmTool({cls: 'tool', name: 'orienting (4 directions)', bodyEls, wp});
+      } else if (tname === 'zoom_into_region') {
+        const url = sd.viewport_path ? `/api/walker/${slug}/file/${sd.viewport_path}` : '';
+        const z = (sd.zoom_factor || 1).toFixed(1);
+        const bodyEls = [el('div', {class: 'tool-line'},
+          el('strong', {text: 'zoom'}),
+          document.createTextNode(' '), chip('year', String(sd.year ?? '?')),
+          document.createTextNode(` · ${z}× zoom on suspected distress`)
+        )];
+        if (sd.purpose) bodyEls.push(el('div', {class: 'meta-row',
+          style: 'font-style:italic', text: '”' + sd.purpose + '”'}));
+        if (url) bodyEls.push(el('img', {class: 'viewport', src: url, loading: 'lazy'}));
+        pmTool({cls: 'zoom', name: 'zooming in for detail', bodyEls, wp});
+      } else if (tname === 'grade') {
+        const gIdx = sd.waypoint_idx ?? wp;
+        const gTier = sd.predicted_tier ?? sd.tier;
+        recolorWaypoint(gIdx, gTier);
+        const bodyEls = [];
+        const condRow = el('div', null,
+          chip('cond ' + gTier, gTier),
+          document.createTextNode(' '));
+        bodyEls.push(condRow);
+        // Render the rationale below the chip with markdown support
+        bodyEls.push(elMd('div', {style: 'margin-top:6px'}, sd.rationale || ''));
+
+        const grades = el('div', {class: 'grade-fields'});
+        const addPills = (pcls, pname, arr) => {
+          if (!arr || !arr.length) return;
+          const grp = el('div', {class: 'grp'});
+          grp.appendChild(el('div', {class: 'grp-name', text: pname}));
+          const pl = el('div', {class: 'pill-list ' + (pcls || '')});
+          for (const item of arr) {
+            const label = (typeof item === 'object' && item !== null)
+              ? (item.type || JSON.stringify(item)) : String(item);
+            pl.appendChild(el('span', {text: label}));
+          }
+          grp.appendChild(pl);
+          grades.appendChild(grp);
+        };
+        addPills('', 'Distresses', sd.distresses_observed);
+        addPills('', 'Treatments', sd.treatments_observed);
+        addPills('safety', 'Safety flags', sd.safety_flags);
+        addPills('surroundings', 'Surroundings', sd.surroundings_notes);
+        addPills('inconsistencies', 'Inconsistencies', sd.inconsistencies);
+        if (grades.children.length) bodyEls.push(grades);
+
+        pmTool({cls: 'grade', name: `verdict · survey point ${gIdx + 1}`,
+                bodyEls, wp: gIdx});
+      } else if (tname === 'skip_waypoint') {
+        recolorWaypoint(sd.waypoint_idx ?? wp, 'unknown');
+        pmTool({cls: 'skip', name: 'skipped',
+                bodyEls: [el('div', {text: sd.skip_reason || ''})],
+                wp: sd.waypoint_idx ?? wp});
+      } else if (tname === 'done') {
+        pushMsg({cls: 'system', name: 'agent · summary',
+                 bodyEls: [el('div', {text: sd.summary || ''})], always: true});
+      }
+      break;
+    }
+    case 'walker_run_complete': {
+      runComplete = true;
+      stopBtn.style.display = 'none';
+      // Stop the pulse on the last visited point — the agent isn't moving anymore.
+      if (agentPulseEl) { map.removeLayer(agentPulseEl); agentPulseEl = null; }
+      // Convert the cursor into a static "you-are-here" dot
+      if (agentCursor) {
+        agentCursor.setStyle({fillColor: '#34c759', fillOpacity: 0.92,
+                               color: '#1d1d1f', weight: 2, radius: 8});
+      }
+      const stopped = ev.stop_reason === 'user_stopped';
+      setStatus('done', stopped ? 'stopped' : 'done');
+      mapBanner.style.display = 'block';
+      mapBanner.classList.remove('subtle');
+      mapBanner.textContent = stopped
+        ? `Survey stopped · ${ev.n_graded}/${ev.n_waypoints} graded so far`
+        : `Survey complete · ${ev.n_graded}/${ev.n_waypoints} graded`;
+      const t = el('div', null,
+        document.createTextNode(stopped
+          ? `Stopped by user. ${ev.n_graded}/${ev.n_waypoints} survey points graded — preserved.`
+          : `Survey complete: ${ev.n_graded}/${ev.n_waypoints} survey points graded.`));
+      pushMsg({cls: 'system', name: stopped ? 'run stopped' : 'run complete',
+               bodyEls: [t], always: true});
+      // Build tier distribution from the graded waypoints
+      const _tierCounts = {};
+      for (const _wp of Object.values(waypoints)) {
+        const _t = _wp.predicted_tier;
+        if (_t && _t !== 'unknown') _tierCounts[_t] = (_tierCounts[_t] || 0) + 1;
+      }
+      const _tierOrder = ['Poor', 'Fair', 'Good'];
+      const _tierChips = _tierOrder
+        .filter(t => _tierCounts[t])
+        .map(t => `<span class="chip cond ${t}" style="font-size:11px">${_tierCounts[t]} ${t}</span>`)
+        .join(' ');
+      sideHead.innerHTML = `
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px">
+          <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+            <span style="font-size:20px;line-height:1;color:${stopped ? '#ff9500' : '#34c759'}">${stopped ? '⏹' : '✓'}</span>
+            <h2 style="margin:0">${stopped ? 'Survey stopped' : 'Survey complete'}</h2>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <span class="sub" style="margin:0;white-space:nowrap">${ev.n_graded} of ${ev.n_waypoints} graded</span>
+            ${_tierChips}
+          </div>
+        </div>
+      `;
+      break;
+    }
+    case 'system_note': {
+      pushSystem(ev.note || '');
+      break;
+    }
+    case 'turn_error': {
+      pushSystem(ev.error || '', true);
+      break;
+    }
+    // -------- Hierarchy events --------
+    case 'hierarchy_run_header': {
+      const t = el('div', null,
+        document.createTextNode(
+          `Hierarchy run on ${ev.street_name || ''}: `
+          + `${ev.n_waypoints} survey points, `
+          + `${ev.n_surveyor_slots || 3} surveyors x `
+          + `${ev.n_investigator_slots_per_surveyor || 2} investigators (parallel).`
+        ));
+      pushMsg({cls: 'system', name: 'hierarchy run started',
+               bodyEls: [t], always: true});
+      break;
+    }
+    case 'agent_spawned': {
+      const role = ev.agent_role || 'agent';
+      const cls = role; // captain | surveyor | investigator -> avatar glyph
+      const aid = ev.agent_id || '';
+      const color = workerColor(aid);
+      const swatch = el('span', {
+        style: `display:inline-block;width:8px;height:8px;border-radius:50%;`
+              + `background:${color};margin-right:6px;vertical-align:middle`,
+      });
+      const _spLabel = ev.point_idx != null ? `SP ${ev.point_idx + 1}` : '';
+      const _agentLabel = role === 'captain' ? 'Captain'
+        : role === 'surveyor' ? _spLabel
+        : role === 'investigator' ? `${_spLabel} · y${ev.year || '?'}` : aid;
+      const lbl = el('span', null, swatch, document.createTextNode(_agentLabel));
+      const reason = ev.spawn_reason ? el('div', {class: 'meta-row',
+        style: 'font-style:italic;color:var(--fg-2)',
+        text: '"' + (ev.spawn_reason).slice(0, 120) + '..."'}) : null;
+      const bodyEls = [lbl];
+      if (reason) bodyEls.push(reason);
+      pushMsg({
+        cls: 'spawn ' + cls,
+        name: `${role} spawned`,
+        bodyEls,
+        wp: ev.point_idx,
+        always: role === 'captain',
+        agentId: aid,
+      });
+      // Move the per-agent cursor to the point if it's a surveyor
+      if (role === 'surveyor' && ev.point_idx != null
+          && waypoints[ev.point_idx]) {
+        const wp = waypoints[ev.point_idx];
+        moveAgentTo(wp.lat, wp.lon, aid);
+      }
+      break;
+    }
+    case 'agent_completed': {
+      const role = ev.agent_role || 'agent';
+      const aid = ev.agent_id || '';
+      const color = workerColor(aid);
+      const swatch = el('span', {
+        style: `display:inline-block;width:8px;height:8px;border-radius:50%;`
+              + `background:${color};margin-right:6px;vertical-align:middle`,
+      });
+      const _spLbl2 = ev.point_idx != null ? `SP ${ev.point_idx + 1}` : '';
+      const _agentLbl2 = role === 'captain' ? 'Captain'
+        : role === 'surveyor' ? _spLbl2
+        : role === 'investigator' ? `${_spLbl2} · y${ev.year || '?'}` : aid;
+      const lbl = el('span', null, swatch,
+        document.createTextNode(`${_agentLbl2} · ${ev.turns_used || 0} steps`));
+      pushMsg({
+        cls: 'spawn ' + role,
+        name: `${role} completed`,
+        bodyEls: [lbl],
+        wp: ev.point_idx,
+        always: role === 'captain',
+        agentId: aid,
+      });
+      if (role === 'surveyor') {
+        const wpTier = (waypoints[ev.point_idx] || {}).predicted_tier || null;
+        freezeAgentCursor(aid, wpTier);
+      }
+      break;
+    }
+    case 'dispatch_order': {
+      const kind = ev.dispatch_kind || 'dispatch';
+      const targets = (ev.point_ids && ev.point_ids.length
+                        ? ev.point_ids.map(p => `SP ${p + 1}`).join(', ')
+                        : (ev.years && ev.years.length
+                            ? `y${ev.years.join(', ')}`
+                            : ''));
+      const bodyEls = [el('div', {class: 'tool-line'},
+        el('strong', {text: kind.replace(/_/g, ' ')}),
+        document.createTextNode(' → ' + targets))];
+      if (ev.directive || ev.purpose) {
+        bodyEls.push(el('div', {class: 'meta-row',
+          style: 'font-style:italic;color:var(--fg-2)',
+          text: '"' + (ev.directive || ev.purpose) + '"'}));
+      }
+      if (ev.focus_yaw != null) {
+        bodyEls.push(el('div', {class: 'meta-row',
+          text: `focus yaw: ${ev.focus_yaw}°`}));
+      }
+      pushMsg({cls: 'dispatch tool', name: 'dispatching agents in parallel',
+               bodyEls, wp: ev.point_idx, always: ev.agent_role === 'captain',
+               agentId: ev.from_agent || ev.agent_id || null});
+      break;
+    }
+    case 'blackboard_post': {
+      const cat = ev.category || 'note';
+      const bodyEls = [el('div', {class: 'tool-line'},
+        chip('cond', cat),
+        document.createTextNode(' '),
+        ev.yaw_deg != null ? chip('year', `yaw ${ev.yaw_deg}°`)
+                              : document.createTextNode('')),
+        elMd('div', {style: 'margin-top:4px'}, ev.content || ''),
+      ];
+      if (ev.confidence != null) {
+        bodyEls.push(el('div', {class: 'meta-row',
+          text: `confidence ${(+ev.confidence).toFixed(2)}`}));
+      }
+      pushMsg({cls: 'claim investigator',
+               name: `claim · year ${ev.year || '?'}`,
+               bodyEls, wp: ev.point_idx,
+               agentId: ev.agent_id || null});
+      break;
+    }
+    case 'report_up': {
+      const role = ev.agent_role || 'agent';
+      const rep = ev.report || {};
+      // Color the map marker as soon as the surveyor reports
+      if (rep.tier && ev.point_idx != null) recolorWaypoint(ev.point_idx, rep.tier);
+      const bodyEls = [el('div', null,
+        document.createTextNode(`${ev.from_agent || ''} → `
+                                + `${ev.to_agent || ''}`))];
+      if (rep.tier) {
+        bodyEls.push(el('div', {style: 'margin-top:4px'},
+          chip('cond ' + rep.tier, rep.tier)));
+      }
+      if (rep.narrative_for_street) {
+        bodyEls.push(elMd('div', {style: 'margin-top:4px'},
+                            rep.narrative_for_street));
+      }
+      if (rep.summary) {
+        bodyEls.push(elMd('div', {style: 'margin-top:4px'}, rep.summary));
+      }
+      const _spLbl = ev.point_idx != null ? `SP ${ev.point_idx + 1}` : '';
+      const _repName = role === 'surveyor' && _spLbl ? `${_spLbl} graded` : `report up`;
+      pushMsg({cls: 'report ' + role, name: _repName,
+               bodyEls, wp: ev.point_idx, agentId: ev.from_agent || ev.agent_id || null});
+      break;
+    }
+    case 'redo_order_issued': {
+      const bodyEls = [el('div', null,
+        document.createTextNode(`Captain orders redo on SP ${ev.point_idx + 1}: `),
+        el('em', {text: ev.reason || ''}))];
+      if (ev.focus_year != null) {
+        bodyEls.push(el('div', {class: 'meta-row',
+          text: `focus year: ${ev.focus_year}`}));
+      }
+      pushMsg({cls: 'redo captain', name: 'redo ordered',
+               bodyEls, wp: ev.point_idx, always: true,
+               agentId: ev.agent_id || null});
+      break;
+    }
+  }
+}
+
+//-----------------------------------------------------------------------------
+// Hierarchy tree poll (only fires when we see hierarchy events)
+//-----------------------------------------------------------------------------
+let hierarchyHasContent = false;
+async function pollHierarchy() {
+  try {
+    const r = await fetch(`/api/temporal/runs/${slug}/hierarchy`);
+    if (r.ok) {
+      const h = await r.json();
+      renderHierarchyTree(h);
+      if (h.captain || (h.surveyors && h.surveyors.length)) {
+        hierarchyHasContent = true;
+        document.getElementById('hierarchy-tree').style.display = 'block';
+      }
+    }
+  } catch (_) {}
+  if (!runComplete) setTimeout(pollHierarchy, 1500);
+}
+
+function renderHierarchyTree(h) {
+  const body = document.getElementById('tree-body');
+  if (!body) return;
+
+  // Count agents for the header label
+  const nAgents = (h.captain ? 1 : 0)
+    + (h.surveyors || []).length
+    + (h.surveyors || []).reduce((s, sv) => s + (sv.investigators || []).length, 0);
+  const lbl = document.getElementById('tree-header-label');
+  if (lbl) lbl.textContent = `Agent fleet · ${nAgents} agent${nAgents !== 1 ? 's' : ''}`;
+
+  const rows = [];
+  if (h.captain) {
+    const c = h.captain;
+    const swatch = `<span class="tree-swatch" style="background:${workerColor(c.agent_id)}"></span>`;
+    const cost = c.cost_usd ? `$${(+c.cost_usd).toFixed(2)}` : '';
+    rows.push(`<div class="tree-row tree-captain" data-agent-id="${escapeHtml(c.agent_id)}"
+        onclick="applyAgentFilter('${escapeHtml(c.agent_id)}')">
+      ${swatch}<span class="tree-glyph">${AVATAR_GLYPH.captain}</span>
+      <span class="tree-name">${escapeHtml(c.agent_id)}</span>
+      <span class="tree-state ${c.state || ''}">${c.state || ''}</span>
+      <span class="tree-meta">${c.turns_used || 0} steps</span>
+    </div>`);
+  }
+  for (const s of (h.surveyors || [])) {
+    const sw = `<span class="tree-swatch" style="background:${workerColor(s.agent_id)}"></span>`;
+    const tier = s.tier
+      ? `<span class="chip cond ${s.tier}" style="font-size:10px;padding:1px 6px;margin-left:6px">${s.tier}</span>`
+      : '';
+    const cost = s.cost_usd ? `$${(+s.cost_usd).toFixed(2)}` : '';
+    rows.push(`<div class="tree-row tree-surveyor" data-agent-id="${escapeHtml(s.agent_id)}"
+        onclick="applyAgentFilter('${escapeHtml(s.agent_id)}')">
+      ${sw}<span class="tree-glyph">${AVATAR_GLYPH.surveyor}</span>
+      <span class="tree-name">SP ${s.point_idx + 1}${tier}</span>
+      <span class="tree-state ${s.state || ''}">${s.state || ''}</span>
+      <span class="tree-meta">${s.turns_used || 0} steps</span>
+    </div>`);
+    for (const i of (s.investigators || [])) {
+      const isw = `<span class="tree-swatch" style="background:${workerColor(i.agent_id)}"></span>`;
+      const usable = i.usable === true ? '✓' : (i.usable === false ? '✗' : '');
+      const icost = i.cost_usd ? `$${(+i.cost_usd).toFixed(2)}` : '';
+      rows.push(`<div class="tree-row tree-investigator" data-agent-id="${escapeHtml(i.agent_id)}"
+          onclick="applyAgentFilter('${escapeHtml(i.agent_id)}')">
+        ${isw}<span class="tree-glyph">${AVATAR_GLYPH.investigator}</span>
+        <span class="tree-name">y${i.year} ${usable}</span>
+        <span class="tree-state ${i.state || ''}">${i.state || ''}</span>
+        <span class="tree-meta">${i.turns_used || 0} steps</span>
+      </div>`);
+    }
+  }
+  body.innerHTML = rows.join('');
+  // Re-apply active agent highlight
+  if (activeAgentFilter) {
+    body.querySelectorAll('.tree-row').forEach(r => {
+      r.classList.toggle('tree-row-active', r.dataset.agentId === activeAgentFilter);
+    });
+  }
+}
+
+async function pollTrace() {
+  try {
+    const r = await fetch(`/api/walker/${slug}/trace/tail?offset=${offset}`);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    offset = data.next_offset || offset;
+    for (const line of (data.lines || [])) renderEvent(line);
+  } catch (e) {
+    setStatus('error', 'connection error');
+  }
+  if (!runComplete) setTimeout(pollTrace, 800);
+}
+</script>
+</body>
+</html>
