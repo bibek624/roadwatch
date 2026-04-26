@@ -758,10 +758,10 @@
         if (tr.positions[i] >= offset) { startLine = i; break; }
         startLine = i + 1;
       }
-      // Pace: emit up to CHUNK lines per poll. With ~800ms polling, full
-      // 2,983-line trace replays in ~50 seconds. Adjust here for faster/slower.
-      const CHUNK = 60;
-      const endLine = Math.min(startLine + CHUNK, tr.parsed.length);
+      // Static demo: dump the entire trace at once so the page renders the
+      // FINAL state immediately (no step-by-step replay). The user can then
+      // scroll the transcript / pan the map manually.
+      const endLine = tr.parsed.length;
       const lines = tr.parsed.slice(startLine, endLine).filter(p => p != null);
       const next_offset = (endLine < tr.positions.length) ? tr.positions[endLine] : tr.total;
       return jsonResponse({
@@ -1350,6 +1350,10 @@ async function pollStatus() {
 //-----------------------------------------------------------------------------
 function onFeedScroll() {}
 function maybeScrollToBottom() {
+  // Static demo: disable auto-scroll so the user can read the agent transcript
+  // from the top in their own time. The chat dumps all events at once and
+  // would otherwise scroll-jam to the bottom 3000 times.
+  if (window.__STATIC_DEMO_SLUG) return;
   sideFeed.scrollTop = sideFeed.scrollHeight;
 }
 
@@ -1671,7 +1675,13 @@ function renderEvent(ev) {
         }
         pmTool({cls: 'peek', name: 'haiku · pano quality screen', bodyEls, wp});
       } else if (tname === 'look') {
-        const url = sd.viewport_path ? `/api/walker/${slug}/file/${sd.viewport_path}` : '';
+        // Static demo: <img src=...> bypasses window.fetch, so URLs must be
+        // resolved to local paths up-front rather than via the fetch shim.
+        const url = sd.viewport_path
+          ? (window.__STATIC_DEMO_SLUG
+              ? `./data/${window.__STATIC_DEMO_SLUG}/${sd.viewport_path}`
+              : `/api/walker/${slug}/file/${sd.viewport_path}`)
+          : '';
         const bodyEls = [el('div', {class: 'tool-line'},
           el('strong', {text: 'look'}),
           document.createTextNode(' '), chip('year', String(sd.year ?? '?')),
@@ -1685,7 +1695,13 @@ function renderEvent(ev) {
         }
         pmTool({cls: 'tool', name: 'looking at the road', bodyEls, wp});
       } else if (tname === 'look_around') {
-        const url = sd.viewport_path ? `/api/walker/${slug}/file/${sd.viewport_path}` : '';
+        // Static demo: <img src=...> bypasses window.fetch, so URLs must be
+        // resolved to local paths up-front rather than via the fetch shim.
+        const url = sd.viewport_path
+          ? (window.__STATIC_DEMO_SLUG
+              ? `./data/${window.__STATIC_DEMO_SLUG}/${sd.viewport_path}`
+              : `/api/walker/${slug}/file/${sd.viewport_path}`)
+          : '';
         const bodyEls = [el('div', {class: 'tool-line'},
           el('strong', {text: 'look_around'}),
           document.createTextNode(' '), chip('year', String(sd.year ?? '?')),
@@ -1696,7 +1712,13 @@ function renderEvent(ev) {
         if (url) bodyEls.push(el('img', {class: 'viewport', src: url, loading: 'lazy'}));
         pmTool({cls: 'tool', name: 'orienting (4 directions)', bodyEls, wp});
       } else if (tname === 'zoom_into_region') {
-        const url = sd.viewport_path ? `/api/walker/${slug}/file/${sd.viewport_path}` : '';
+        // Static demo: <img src=...> bypasses window.fetch, so URLs must be
+        // resolved to local paths up-front rather than via the fetch shim.
+        const url = sd.viewport_path
+          ? (window.__STATIC_DEMO_SLUG
+              ? `./data/${window.__STATIC_DEMO_SLUG}/${sd.viewport_path}`
+              : `/api/walker/${slug}/file/${sd.viewport_path}`)
+          : '';
         const z = (sd.zoom_factor || 1).toFixed(1);
         const bodyEls = [el('div', {class: 'tool-line'},
           el('strong', {text: 'zoom'}),
