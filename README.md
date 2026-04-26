@@ -6,7 +6,7 @@
 > priority brief.
 
 🎬 **[3-minute demo video](#)** _(link added on submission)_
-🌐 **[Live demo](https://github.com/USER/REPO)** _(GitHub Pages link added after first push)_
+🌐 **[Live demo](https://bibek624.github.io/roadwatch/)** · **[Source on GitHub](https://github.com/bibek624/roadwatch)**
 
 Built for the **Anthropic Opus 4.7 hackathon** (April 2026).
 
@@ -157,7 +157,7 @@ from a validation result that contradicted an assumption.
 ### 2. Install
 
 ```bash
-git clone https://github.com/USER/REPO.git roadwatch
+git clone https://github.com/bibek624/roadwatch.git
 cd roadwatch
 python -m venv .venv && source .venv/bin/activate   # or .venv\Scripts\activate on Windows
 pip install -r requirements.txt
