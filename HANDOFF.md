@@ -6,7 +6,7 @@
 
 This file is the **starting point for a fresh Claude Code session**. Read this first; it points at everything else.
 
-Author: **Bibek Acharya** — pavement engineer + remote-sensing background. Built for the **Opus 4.7 hackathon** (submission Sun Apr 26 2026, 8:00 PM EST).
+Author: **Bibek Parajuli** — pavement engineer + remote-sensing background. Built for the **Opus 4.7 hackathon** (submission Sun Apr 26 2026, 8:00 PM EST).
 
 ---
 

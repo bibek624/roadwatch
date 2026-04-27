@@ -5,7 +5,7 @@
 > survey point on a corridor, and turns the evidence into a decision-grade
 > priority brief.
 
-🎬 **[3-minute demo video](#)** _(link added on submission)_
+🎬 **[3-minute demo video](https://youtu.be/XVfxFR1nMwg)**
 🌐 **[Live demo](https://bibek624.github.io/roadwatch/)** · **[Source on GitHub](https://github.com/bibek624/roadwatch)**
 
 Built for the **Anthropic Opus 4.7 hackathon** (April 2026).
@@ -288,5 +288,5 @@ MIT. See [LICENSE](LICENSE).
 
 ## Author
 
-Built by **Bibek Acharya** (pavement engineer + remote-sensing background)
+Built by **Bibek Parajuli** (pavement engineer + remote-sensing background)
 during the Opus 4.7 hackathon, April 2026.
